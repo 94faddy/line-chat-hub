@@ -1,0 +1,5 @@
+/.next
+/.output
+/node_modules
+.env
+package-lock.json
