@@ -7,8 +7,6 @@ import {
   FiSmile, FiPaperclip, FiCheck, FiCheckCircle, FiX,
   FiTag, FiUser, FiMessageCircle, FiInbox
 } from 'react-icons/fi';
-import { formatDistanceToNow } from 'date-fns';
-import { th } from 'date-fns/locale';
 import Swal from 'sweetalert2';
 
 interface Channel {
@@ -49,6 +47,70 @@ interface Message {
   created_at: string;
 }
 
+// ฟังก์ชันแปลงเวลาเป็น Asia/Bangkok timezone แบบ relative
+function formatThaiTime(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  
+  // คำนวณเวลาที่ผ่านไป
+  const diffMs = now.getTime() - date.getTime();
+  const diffSecs = Math.floor(diffMs / 1000);
+  const diffMins = Math.floor(diffSecs / 60);
+  const diffHours = Math.floor(diffMins / 60);
+  const diffDays = Math.floor(diffHours / 24);
+
+  if (diffSecs < 60) {
+    return 'เมื่อสักครู่';
+  } else if (diffMins < 60) {
+    return `${diffMins} นาทีที่แล้ว`;
+  } else if (diffHours < 24) {
+    return `${diffHours} ชั่วโมงที่แล้ว`;
+  } else if (diffDays < 7) {
+    return `${diffDays} วันที่แล้ว`;
+  } else {
+    // แสดงวันที่แบบไทย
+    return date.toLocaleDateString('th-TH', {
+      day: 'numeric',
+      month: 'short',
+      timeZone: 'Asia/Bangkok'
+    });
+  }
+}
+
+// ฟังก์ชันแสดงเวลาข้อความแบบละเอียด
+function formatMessageTime(dateString: string): string {
+  const date = new Date(dateString);
+  const now = new Date();
+  
+  // ตรวจสอบว่าเป็นวันเดียวกันหรือไม่
+  const isToday = date.toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' }) === 
+                  now.toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' });
+  
+  // ตรวจสอบว่าเป็นเมื่อวานหรือไม่
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const isYesterday = date.toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' }) === 
+                      yesterday.toLocaleDateString('th-TH', { timeZone: 'Asia/Bangkok' });
+
+  const timeStr = date.toLocaleTimeString('th-TH', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Asia/Bangkok'
+  });
+
+  if (isToday) {
+    return timeStr;
+  } else if (isYesterday) {
+    return `เมื่อวาน ${timeStr}`;
+  } else {
+    return date.toLocaleDateString('th-TH', {
+      day: 'numeric',
+      month: 'short',
+      timeZone: 'Asia/Bangkok'
+    }) + ' ' + timeStr;
+  }
+}
+
 export default function InboxPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -64,6 +126,13 @@ export default function InboxPage() {
   useEffect(() => {
     fetchChannels();
     fetchConversations();
+    
+    // Auto refresh conversations ทุก 10 วินาที
+    const interval = setInterval(() => {
+      fetchConversations();
+    }, 10000);
+    
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -230,10 +299,6 @@ export default function InboxPage() {
     return true;
   });
 
-  const formatTime = (date: string) => {
-    return formatDistanceToNow(new Date(date), { addSuffix: true, locale: th });
-  };
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -347,7 +412,7 @@ export default function InboxPage() {
                       {conv.line_user?.display_name || 'Unknown'}
                     </span>
                     <span className="text-xs text-gray-400 flex-shrink-0">
-                      {conv.last_message_at && formatTime(conv.last_message_at)}
+                      {conv.last_message_at && formatThaiTime(conv.last_message_at)}
                     </span>
                   </div>
                   
@@ -441,7 +506,7 @@ export default function InboxPage() {
                       <div className="text-4xl">🎉</div>
                     )}
                     <div className={`text-xs mt-1 ${msg.direction === 'outgoing' ? 'text-green-100' : 'text-gray-400'}`}>
-                      {formatTime(msg.created_at)}
+                      {formatMessageTime(msg.created_at)}
                     </div>
                   </div>
                 </div>

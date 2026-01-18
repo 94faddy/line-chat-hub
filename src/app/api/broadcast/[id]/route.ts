@@ -22,7 +22,7 @@ export async function GET(
     const { id } = await params;
 
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT b.*, lc.name as channel_name
+      `SELECT b.*, lc.channel_name as channel_name
        FROM broadcasts b
        LEFT JOIN line_channels lc ON b.channel_id = lc.id
        WHERE b.id = ?`,

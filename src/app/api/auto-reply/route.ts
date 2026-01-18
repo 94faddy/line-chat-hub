@@ -17,7 +17,7 @@ export async function GET(request: NextRequest) {
     }
 
     const [rows] = await pool.query<RowDataPacket[]>(`
-      SELECT ar.*, lc.name as channel_name
+      SELECT ar.*, lc.channel_name as channel_name
       FROM auto_replies ar
       LEFT JOIN line_channels lc ON ar.channel_id = lc.id
       ORDER BY ar.priority DESC, ar.created_at DESC
@@ -60,7 +60,7 @@ export async function POST(request: NextRequest) {
     );
 
     const [newReply] = await pool.query<RowDataPacket[]>(
-      `SELECT ar.*, lc.name as channel_name
+      `SELECT ar.*, lc.channel_name as channel_name
        FROM auto_replies ar
        LEFT JOIN line_channels lc ON ar.channel_id = lc.id
        WHERE ar.id = ?`,

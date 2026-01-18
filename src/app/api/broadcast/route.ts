@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import pool from '@/lib/db';
 import { verifyToken, getTokenFromCookies } from '@/lib/auth';
 import { RowDataPacket, ResultSetHeader } from 'mysql2';
-import { sendBroadcastMessage } from '@/lib/line';
+import { pushMessage } from '@/lib/line';
 
 // GET - List all broadcasts
 export async function GET(request: NextRequest) {
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     }
 
     const [rows] = await pool.query<RowDataPacket[]>(`
-      SELECT b.*, lc.name as channel_name
+      SELECT b.*, lc.channel_name as channel_name
       FROM broadcasts b
       LEFT JOIN line_channels lc ON b.channel_id = lc.id
       ORDER BY b.created_at DESC
@@ -99,12 +99,19 @@ export async function POST(request: NextRequest) {
         // Send message to each user
         for (const user of users) {
           try {
-            await sendBroadcastMessage(channel.access_token, user.line_user_id, {
-              type: message_type || 'text',
-              text: message_type === 'text' ? content : undefined,
-              originalContentUrl: message_type === 'image' ? content : undefined,
-              previewImageUrl: message_type === 'image' ? content : undefined
-            });
+            // สร้าง message object ที่ถูกต้อง
+            const lineMessage = message_type === 'image' 
+              ? {
+                  type: 'image' as const,
+                  originalContentUrl: content,
+                  previewImageUrl: content
+                }
+              : {
+                  type: 'text' as const,
+                  text: content
+                };
+
+            await pushMessage(channel.channel_access_token, user.line_user_id, lineMessage);
             sentCount++;
           } catch (e) {
             failedCount++;
@@ -128,7 +135,7 @@ export async function POST(request: NextRequest) {
     }
 
     const [newBroadcast] = await pool.query<RowDataPacket[]>(
-      `SELECT b.*, lc.name as channel_name
+      `SELECT b.*, lc.channel_name as channel_name
        FROM broadcasts b
        LEFT JOIN line_channels lc ON b.channel_id = lc.id
        WHERE b.id = ?`,

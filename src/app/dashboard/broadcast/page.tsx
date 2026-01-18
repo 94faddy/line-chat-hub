@@ -26,8 +26,21 @@ interface Broadcast {
 
 interface Channel {
   id: number;
-  name: string;
-  followers_count: number;
+  channel_name: string;
+  followers_count?: number;
+}
+
+// ฟังก์ชันแสดงเวลาแบบ Asia/Bangkok
+function formatThaiDateTime(dateString: string): string {
+  const date = new Date(dateString);
+  return date.toLocaleString('th-TH', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
 }
 
 export default function BroadcastPage() {
@@ -105,10 +118,10 @@ export default function BroadcastPage() {
       title: 'ยืนยันการส่ง Broadcast',
       html: `
         <div class="text-left">
-          <p><strong>Channel:</strong> ${channel?.name}</p>
+          <p><strong>Channel:</strong> ${channel?.channel_name}</p>
           <p><strong>กลุ่มเป้าหมาย:</strong> ${form.target_type === 'all' ? 'ผู้ติดตามทั้งหมด' : 'กลุ่มที่เลือก'}</p>
           <p><strong>จำนวน:</strong> ~${channel?.followers_count || 0} คน</p>
-          ${form.scheduled_at ? `<p><strong>กำหนดส่ง:</strong> ${new Date(form.scheduled_at).toLocaleString('th-TH')}</p>` : ''}
+          ${form.scheduled_at ? `<p><strong>กำหนดส่ง:</strong> ${formatThaiDateTime(form.scheduled_at)}</p>` : ''}
         </div>
       `,
       icon: 'question',
@@ -141,7 +154,7 @@ export default function BroadcastPage() {
             icon: 'success',
             title: form.scheduled_at ? 'ตั้งเวลาส่งเรียบร้อย' : 'กำลังส่งข้อความ',
             text: form.scheduled_at 
-              ? `ข้อความจะถูกส่งในวันที่ ${new Date(form.scheduled_at).toLocaleString('th-TH')}`
+              ? `ข้อความจะถูกส่งในวันที่ ${formatThaiDateTime(form.scheduled_at)}`
               : 'ระบบกำลังส่งข้อความไปยังผู้ติดตามทั้งหมด',
             timer: 3000,
             showConfirmButton: false
@@ -360,13 +373,13 @@ export default function BroadcastPage() {
                         {broadcast.sent_at && (
                           <span className="flex items-center gap-1">
                             <FiClock className="w-4 h-4" />
-                            {new Date(broadcast.sent_at).toLocaleString('th-TH')}
+                            {formatThaiDateTime(broadcast.sent_at)}
                           </span>
                         )}
                         {broadcast.scheduled_at && broadcast.status === 'scheduled' && (
                           <span className="flex items-center gap-1 text-yellow-600">
                             <FiCalendar className="w-4 h-4" />
-                            {new Date(broadcast.scheduled_at).toLocaleString('th-TH')}
+                            {formatThaiDateTime(broadcast.scheduled_at)}
                           </span>
                         )}
                       </div>
@@ -419,7 +432,7 @@ export default function BroadcastPage() {
                   <option value="">-- เลือก Channel --</option>
                   {channels.map(ch => (
                     <option key={ch.id} value={ch.id}>
-                      {ch.name} ({ch.followers_count?.toLocaleString() || 0} followers)
+                      {ch.channel_name} ({ch.followers_count?.toLocaleString() || 0} followers)
                     </option>
                   ))}
                 </select>

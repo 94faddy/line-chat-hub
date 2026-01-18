@@ -72,12 +72,15 @@ export class LineClient {
   }
 
   // ส่งข้อความตอบกลับ
-  async replyMessage(replyToken: string, messages: LineMessage[]): Promise<void> {
+  async replyMessage(replyToken: string, messages: LineMessage | LineMessage[]): Promise<void> {
+    // ตรวจสอบว่า messages เป็น array หรือไม่ ถ้าไม่ใช่ให้แปลงเป็น array
+    const messagesArray = Array.isArray(messages) ? messages : [messages];
+    
     await axios.post(
       `${LINE_API_BASE}/bot/message/reply`,
       {
         replyToken,
-        messages,
+        messages: messagesArray,
       },
       {
         headers: {
@@ -89,12 +92,15 @@ export class LineClient {
   }
 
   // ส่งข้อความ push
-  async pushMessage(to: string, messages: LineMessage[]): Promise<void> {
+  async pushMessage(to: string, messages: LineMessage | LineMessage[]): Promise<void> {
+    // ตรวจสอบว่า messages เป็น array หรือไม่ ถ้าไม่ใช่ให้แปลงเป็น array
+    const messagesArray = Array.isArray(messages) ? messages : [messages];
+    
     await axios.post(
       `${LINE_API_BASE}/bot/message/push`,
       {
         to,
-        messages,
+        messages: messagesArray,
       },
       {
         headers: {
@@ -106,12 +112,14 @@ export class LineClient {
   }
 
   // ส่งข้อความ multicast
-  async multicastMessage(to: string[], messages: LineMessage[]): Promise<void> {
+  async multicastMessage(to: string[], messages: LineMessage | LineMessage[]): Promise<void> {
+    const messagesArray = Array.isArray(messages) ? messages : [messages];
+    
     await axios.post(
       `${LINE_API_BASE}/bot/message/multicast`,
       {
         to,
-        messages,
+        messages: messagesArray,
       },
       {
         headers: {
@@ -123,11 +131,13 @@ export class LineClient {
   }
 
   // ส่งข้อความ broadcast
-  async broadcastMessage(messages: LineMessage[]): Promise<void> {
+  async broadcastMessage(messages: LineMessage | LineMessage[]): Promise<void> {
+    const messagesArray = Array.isArray(messages) ? messages : [messages];
+    
     await axios.post(
       `${LINE_API_BASE}/bot/message/broadcast`,
       {
-        messages,
+        messages: messagesArray,
       },
       {
         headers: {
@@ -223,13 +233,16 @@ export function createFlexMessage(altText: string, contents: any): LineMessage {
 export async function sendBroadcastMessage(
   accessToken: string,
   userId: string,
-  message: LineMessage
+  message: LineMessage | LineMessage[]
 ): Promise<void> {
+  // ตรวจสอบว่า message เป็น array หรือไม่ ถ้าไม่ใช่ให้แปลงเป็น array
+  const messagesArray = Array.isArray(message) ? message : [message];
+  
   await axios.post(
     `${LINE_API_BASE}/bot/message/push`,
     {
       to: userId,
-      messages: [message],
+      messages: messagesArray,
     },
     {
       headers: {
@@ -269,17 +282,20 @@ export async function getChannelInfo(accessToken: string): Promise<any> {
   return response.data;
 }
 
-// Push message standalone
+// Push message standalone - รองรับทั้ง single message และ array
 export async function pushMessage(
   accessToken: string,
   to: string,
-  messages: LineMessage[]
+  message: LineMessage | LineMessage[]
 ): Promise<void> {
+  // ตรวจสอบว่า message เป็น array หรือไม่ ถ้าไม่ใช่ให้แปลงเป็น array
+  const messagesArray = Array.isArray(message) ? message : [message];
+  
   await axios.post(
     `${LINE_API_BASE}/bot/message/push`,
     {
       to,
-      messages,
+      messages: messagesArray,
     },
     {
       headers: {
@@ -304,17 +320,20 @@ export async function getMessageContent(accessToken: string, messageId: string):
   return Buffer.from(response.data);
 }
 
-// Reply message standalone
+// Reply message standalone - รองรับทั้ง single message และ array
 export async function replyMessage(
   accessToken: string,
   replyToken: string,
-  messages: LineMessage[]
+  messages: LineMessage | LineMessage[]
 ): Promise<void> {
+  // ตรวจสอบว่า messages เป็น array หรือไม่ ถ้าไม่ใช่ให้แปลงเป็น array
+  const messagesArray = Array.isArray(messages) ? messages : [messages];
+  
   await axios.post(
     `${LINE_API_BASE}/bot/message/reply`,
     {
       replyToken,
-      messages,
+      messages: messagesArray,
     },
     {
       headers: {

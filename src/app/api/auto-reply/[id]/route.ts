@@ -22,7 +22,7 @@ export async function GET(
     const { id } = await params;
 
     const [rows] = await pool.query<RowDataPacket[]>(
-      `SELECT ar.*, lc.name as channel_name
+      `SELECT ar.*, lc.channel_name as channel_name
        FROM auto_replies ar
        LEFT JOIN line_channels lc ON ar.channel_id = lc.id
        WHERE ar.id = ?`,
@@ -103,7 +103,7 @@ export async function PUT(
     );
 
     const [updated] = await pool.query<RowDataPacket[]>(
-      `SELECT ar.*, lc.name as channel_name
+      `SELECT ar.*, lc.channel_name as channel_name
        FROM auto_replies ar
        LEFT JOIN line_channels lc ON ar.channel_id = lc.id
        WHERE ar.id = ?`,

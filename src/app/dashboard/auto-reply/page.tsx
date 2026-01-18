@@ -23,7 +23,7 @@ interface AutoReply {
 
 interface Channel {
   id: number;
-  name: string;
+  channel_name: string;
 }
 
 export default function AutoReplyPage() {
@@ -261,7 +261,7 @@ export default function AutoReplyPage() {
             <option value="all">ทุก Channel</option>
             <option value="global">Global (ทุก Channel)</option>
             {channels.map(ch => (
-              <option key={ch.id} value={ch.id}>{ch.name}</option>
+              <option key={ch.id} value={ch.id}>{ch.channel_name}</option>
             ))}
           </select>
         </div>
@@ -392,7 +392,7 @@ export default function AutoReplyPage() {
                 >
                   <option value="">Global (ใช้กับทุก Channel)</option>
                   {channels.map(ch => (
-                    <option key={ch.id} value={ch.id}>{ch.name}</option>
+                    <option key={ch.id} value={ch.id}>{ch.channel_name}</option>
                   ))}
                 </select>
               </div>
