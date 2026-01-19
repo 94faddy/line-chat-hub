@@ -6,7 +6,8 @@ import {
   FiSearch, FiFilter, FiMoreVertical, FiSend, FiImage, 
   FiSmile, FiPaperclip, FiCheck, FiCheckCircle, FiX,
   FiTag, FiUser, FiMessageCircle, FiInbox, FiZap, FiPlus,
-  FiTrash2, FiEdit2, FiBell, FiDownload, FiExternalLink
+  FiTrash2, FiEdit2, FiBell, FiDownload, FiExternalLink,
+  FiChevronDown
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 import { FlexMessageRenderer, LinkifyText } from '@/components/FlexMessageRenderer';
@@ -67,13 +68,82 @@ interface Message {
   created_at: string;
 }
 
+// ============================================
+// LINE Sticker Packages (ใช้ได้ฟรี)
+// ============================================
+const LINE_STICKER_PACKAGES = [
+  {
+    packageId: '11537',
+    name: 'Moon & James',
+    stickers: ['52002734', '52002735', '52002736', '52002737', '52002738', '52002739', '52002740', '52002741', '52002742', '52002743', '52002744', '52002745', '52002746', '52002747', '52002748', '52002749', '52002750', '52002751', '52002752', '52002753', '52002754', '52002755', '52002756', '52002757', '52002758', '52002759', '52002760', '52002761', '52002762', '52002763', '52002764', '52002765', '52002766', '52002767', '52002768', '52002769', '52002770', '52002771', '52002772', '52002773']
+  },
+  {
+    packageId: '11538',
+    name: 'Brown & Cony',
+    stickers: ['51626494', '51626495', '51626496', '51626497', '51626498', '51626499', '51626500', '51626501', '51626502', '51626503', '51626504', '51626505', '51626506', '51626507', '51626508', '51626509', '51626510', '51626511', '51626512', '51626513', '51626514', '51626515', '51626516', '51626517', '51626518', '51626519', '51626520', '51626521', '51626522', '51626523', '51626524', '51626525', '51626526', '51626527', '51626528', '51626529', '51626530', '51626531', '51626532', '51626533']
+  },
+  {
+    packageId: '11539',
+    name: 'Cony',
+    stickers: ['52114110', '52114111', '52114112', '52114113', '52114114', '52114115', '52114116', '52114117', '52114118', '52114119', '52114120', '52114121', '52114122', '52114123', '52114124', '52114125', '52114126', '52114127', '52114128', '52114129', '52114130', '52114131', '52114132', '52114133', '52114134', '52114135', '52114136', '52114137', '52114138', '52114139', '52114140', '52114141', '52114142', '52114143', '52114144', '52114145', '52114146', '52114147', '52114148', '52114149']
+  },
+  {
+    packageId: '6359',
+    name: 'Brown & Friends',
+    stickers: ['11069850', '11069851', '11069852', '11069853', '11069854', '11069855', '11069856', '11069857', '11069858', '11069859', '11069860', '11069861', '11069862', '11069863', '11069864', '11069865', '11069866', '11069867', '11069868', '11069869', '11069870', '11069871', '11069872', '11069873']
+  }
+];
+
+// ============================================
+// Emoji Data
+// ============================================
+const EMOJI_CATEGORIES = [
+  {
+    name: 'Smileys',
+    emojis: ['😀', '😃', '😄', '😁', '😆', '😅', '🤣', '😂', '🙂', '🙃', '😉', '😊', '😇', '🥰', '😍', '🤩', '😘', '😗', '😚', '😙', '🥲', '😋', '😛', '😜', '🤪', '😝', '🤑', '🤗', '🤭', '🤫', '🤔', '🤐', '🤨', '😐', '😑', '😶', '😏', '😒', '🙄', '😬', '😮‍💨', '🤥', '😌', '😔', '😪', '🤤', '😴', '😷', '🤒', '🤕', '🤢', '🤮', '🤧', '🥵', '🥶', '🥴', '😵', '🤯', '🤠', '🥳', '🥸', '😎', '🤓', '🧐']
+  },
+  {
+    name: 'Gestures',
+    emojis: ['👋', '🤚', '🖐', '✋', '🖖', '👌', '🤌', '🤏', '✌️', '🤞', '🤟', '🤘', '🤙', '👈', '👉', '👆', '🖕', '👇', '☝️', '👍', '👎', '✊', '👊', '🤛', '🤜', '👏', '🙌', '👐', '🤲', '🤝', '🙏', '✍️', '💪', '🦾', '🦿', '🦵', '🦶', '👂', '🦻', '👃', '🧠', '🫀', '🫁', '🦷', '🦴', '👀', '👁', '👅', '👄']
+  },
+  {
+    name: 'Hearts',
+    emojis: ['❤️', '🧡', '💛', '💚', '💙', '💜', '🖤', '🤍', '🤎', '💔', '❣️', '💕', '💞', '💓', '💗', '💖', '💘', '💝', '💟', '♥️', '💌', '💋', '👄', '🫦']
+  },
+  {
+    name: 'Animals',
+    emojis: ['🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🙈', '🙉', '🙊', '🐔', '🐧', '🐦', '🐤', '🦆', '🦅', '🦉', '🦇', '🐺', '🐗', '🐴', '🦄', '🐝', '🐛', '🦋', '🐌', '🐞', '🐜', '🦟', '🦗', '🕷', '🦂', '🐢', '🐍', '🦎', '🦖', '🦕', '🐙', '🦑', '🦐', '🦞', '🦀', '🐡', '🐠', '🐟', '🐬', '🐳', '🐋', '🦈', '🐊', '🐅', '🐆', '🦓', '🦍', '🦧', '🐘']
+  },
+  {
+    name: 'Food',
+    emojis: ['🍎', '🍐', '🍊', '🍋', '🍌', '🍉', '🍇', '🍓', '🫐', '🍈', '🍒', '🍑', '🥭', '🍍', '🥥', '🥝', '🍅', '🍆', '🥑', '🥦', '🥬', '🥒', '🌶', '🫑', '🌽', '🥕', '🫒', '🧄', '🧅', '🥔', '🍠', '🥐', '🥯', '🍞', '🥖', '🥨', '🧀', '🥚', '🍳', '🧈', '🥞', '🧇', '🥓', '🥩', '🍗', '🍖', '🦴', '🌭', '🍔', '🍟', '🍕', '🫓', '🥪', '🥙', '🧆', '🌮', '🌯', '🫔', '🥗', '🥘', '🫕', '🥫', '🍝', '🍜', '🍲', '🍛', '🍣', '🍱', '🥟', '🦪', '🍤', '🍙', '🍚', '🍘', '🍥', '🥠', '🥮', '🍢', '🍡', '🍧', '🍨', '🍦', '🥧', '🧁', '🍰', '🎂', '🍮', '🍭', '🍬', '🍫', '🍿', '🍩', '🍪', '🌰', '🥜', '🍯', '🥛', '🍼', '🫖', '☕️', '🍵', '🧃', '🥤', '🧋', '🍶', '🍺', '🍻', '🥂', '🍷', '🥃', '🍸', '🍹', '🧉', '🍾', '🧊']
+  },
+  {
+    name: 'Objects',
+    emojis: ['⌚️', '📱', '💻', '⌨️', '🖥', '🖨', '🖱', '🖲', '💽', '💾', '💿', '📀', '📼', '📷', '📸', '📹', '🎥', '📽', '🎞', '📞', '☎️', '📟', '📠', '📺', '📻', '🎙', '🎚', '🎛', '🧭', '⏱', '⏲', '⏰', '🕰', '⌛️', '⏳', '📡', '🔋', '🔌', '💡', '🔦', '🕯', '🪔', '🧯', '🛢', '💸', '💵', '💴', '💶', '💷', '🪙', '💰', '💳', '💎', '⚖️', '🪜', '🧰', '🪛', '🔧', '🔨', '⚒', '🛠', '⛏', '🪚', '🔩', '⚙️', '🪤', '🧱', '⛓', '🧲', '🔫', '💣', '🧨', '🪓', '🔪', '🗡', '⚔️', '🛡', '🚬', '⚰️', '🪦', '⚱️', '🏺', '🔮', '📿', '🧿', '💈', '⚗️', '🔭', '🔬', '🕳', '🩹', '🩺', '💊', '💉', '🩸', '🧬', '🦠', '🧫', '🧪']
+  },
+  {
+    name: 'Symbols',
+    emojis: ['✅', '❌', '❓', '❗️', '‼️', '⁉️', '💯', '🔥', '✨', '⭐️', '🌟', '💫', '💥', '💢', '💦', '💨', '🕳', '💬', '👁‍🗨', '🗨', '🗯', '💭', '💤', '🏳️', '🏴', '🏁', '🚩', '🏳️‍🌈', '🏳️‍⚧️', '🔴', '🟠', '🟡', '🟢', '🔵', '🟣', '🟤', '⚫️', '⚪️', '🟥', '🟧', '🟨', '🟩', '🟦', '🟪', '🟫', '⬛️', '⬜️', '◼️', '◻️', '▪️', '▫️', '🔶', '🔷', '🔸', '🔹', '🔺', '🔻', '💠', '🔘', '🔳', '🔲']
+  }
+];
+
+// ============================================
+// Helper function แปลง /uploads/ เป็น /api/media/
+// ============================================
+const getMediaUrl = (url: string | undefined): string | undefined => {
+  if (!url) return undefined;
+  if (url.includes('/uploads/')) {
+    return url.replace('/uploads/', '/api/media/');
+  }
+  return url;
+};
+
 // ฟังก์ชันแปลงเวลาเป็น Asia/Bangkok timezone แบบ relative
 function formatThaiTime(dateString: string): string {
-  // แปลงเป็น Date object และปรับเป็น local time
   const date = new Date(dateString);
   const now = new Date();
   
-  // คำนวณเวลาที่ผ่านไป
   const diffMs = now.getTime() - date.getTime();
   const diffSecs = Math.floor(diffMs / 1000);
   const diffMins = Math.floor(diffSecs / 60);
@@ -144,7 +214,6 @@ function ImageModal({ url, onClose }: { url: string; onClose: () => void }) {
       className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
       onClick={onClose}
     >
-      {/* Close button */}
       <button 
         onClick={onClose}
         className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
@@ -152,7 +221,6 @@ function ImageModal({ url, onClose }: { url: string; onClose: () => void }) {
         <FiX className="w-6 h-6 text-white" />
       </button>
       
-      {/* Action buttons */}
       <div className="absolute top-4 right-16 flex gap-2">
         <a
           href={url}
@@ -175,14 +243,10 @@ function ImageModal({ url, onClose }: { url: string; onClose: () => void }) {
         </a>
       </div>
       
-      {/* Image container - 50% of screen */}
       <div 
         className="relative"
         onClick={(e) => e.stopPropagation()}
-        style={{ 
-          maxWidth: '50vw', 
-          maxHeight: '80vh'
-        }}
+        style={{ maxWidth: '50vw', maxHeight: '80vh' }}
       >
         <img 
           src={url} 
@@ -190,6 +254,195 @@ function ImageModal({ url, onClose }: { url: string; onClose: () => void }) {
           className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl"
         />
       </div>
+    </div>
+  );
+}
+
+// ============================================
+// Emoji Picker Component
+// ============================================
+interface EmojiPickerProps {
+  onSelect: (emoji: string) => void;
+  onClose: () => void;
+}
+
+function EmojiPicker({ onSelect, onClose }: EmojiPickerProps) {
+  const [activeCategory, setActiveCategory] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+
+  const filteredEmojis = searchQuery
+    ? EMOJI_CATEGORIES.flatMap(cat => cat.emojis).filter(emoji => emoji.includes(searchQuery))
+    : EMOJI_CATEGORIES[activeCategory].emojis;
+
+  return (
+    <div className="absolute bottom-full left-0 mb-2 bg-white rounded-xl shadow-xl border border-gray-200 w-80 z-50">
+      {/* Header */}
+      <div className="p-2 border-b border-gray-100">
+        <input
+          type="text"
+          placeholder="ค้นหา emoji..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+        />
+      </div>
+
+      {/* Category Tabs */}
+      {!searchQuery && (
+        <div className="flex border-b border-gray-100 px-1">
+          {EMOJI_CATEGORIES.map((cat, idx) => (
+            <button
+              key={cat.name}
+              onClick={() => setActiveCategory(idx)}
+              className={`flex-1 py-2 text-lg hover:bg-gray-50 rounded-t transition-colors ${
+                activeCategory === idx ? 'bg-gray-100' : ''
+              }`}
+              title={cat.name}
+            >
+              {cat.emojis[0]}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Emoji Grid */}
+      <div className="p-2 h-48 overflow-y-auto">
+        <div className="grid grid-cols-8 gap-1">
+          {filteredEmojis.map((emoji, idx) => (
+            <button
+              key={idx}
+              onClick={() => {
+                onSelect(emoji);
+                onClose();
+              }}
+              className="w-8 h-8 flex items-center justify-center text-xl hover:bg-gray-100 rounded transition-colors"
+            >
+              {emoji}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Close button */}
+      <div className="p-2 border-t border-gray-100 flex justify-end">
+        <button
+          onClick={onClose}
+          className="text-xs text-gray-500 hover:text-gray-700"
+        >
+          ปิด
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// LINE Sticker Picker Component
+// ============================================
+interface StickerPickerProps {
+  onSelect: (packageId: string, stickerId: string) => void;
+  onClose: () => void;
+}
+
+function StickerPicker({ onSelect, onClose }: StickerPickerProps) {
+  const [activePackage, setActivePackage] = useState(0);
+
+  return (
+    <div className="absolute bottom-full left-0 mb-2 bg-white rounded-xl shadow-xl border border-gray-200 w-96 z-50">
+      {/* Header */}
+      <div className="p-3 border-b border-gray-100 flex justify-between items-center">
+        <span className="font-medium text-gray-700">LINE Stickers</span>
+        <button onClick={onClose} className="text-gray-400 hover:text-gray-600">
+          <FiX className="w-4 h-4" />
+        </button>
+      </div>
+
+      {/* Package Tabs */}
+      <div className="flex border-b border-gray-100 px-2 overflow-x-auto">
+        {LINE_STICKER_PACKAGES.map((pkg, idx) => (
+          <button
+            key={pkg.packageId}
+            onClick={() => setActivePackage(idx)}
+            className={`px-3 py-2 text-sm whitespace-nowrap hover:bg-gray-50 transition-colors ${
+              activePackage === idx ? 'border-b-2 border-green-500 text-green-600 font-medium' : 'text-gray-600'
+            }`}
+          >
+            {pkg.name}
+          </button>
+        ))}
+      </div>
+
+      {/* Sticker Grid */}
+      <div className="p-3 h-64 overflow-y-auto">
+        <div className="grid grid-cols-4 gap-2">
+          {LINE_STICKER_PACKAGES[activePackage].stickers.slice(0, 20).map((stickerId) => (
+            <button
+              key={stickerId}
+              onClick={() => {
+                onSelect(LINE_STICKER_PACKAGES[activePackage].packageId, stickerId);
+                onClose();
+              }}
+              className="aspect-square bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors p-1 flex items-center justify-center"
+            >
+              <img
+                src={`https://stickershop.line-scdn.net/stickershop/v1/sticker/${stickerId}/android/sticker.png`}
+                alt="Sticker"
+                className="w-full h-full object-contain"
+                loading="lazy"
+              />
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ============================================
+// New Message Bubble Component
+// ============================================
+interface NewMessageBubbleProps {
+  message: Message;
+  senderName: string;
+  onClick: () => void;
+}
+
+function NewMessageBubble({ message, senderName, onClick }: NewMessageBubbleProps) {
+  const getPreview = () => {
+    switch (message.message_type) {
+      case 'text': return message.content?.substring(0, 50) || '';
+      case 'image': return '📷 ส่งรูปภาพ';
+      case 'video': return '🎬 ส่งวิดีโอ';
+      case 'audio': return '🎵 ส่งเสียง';
+      case 'sticker': return '😀 ส่งสติกเกอร์';
+      case 'location': return '📍 ส่งตำแหน่ง';
+      case 'flex': return '📋 Flex Message';
+      default: return `[${message.message_type}]`;
+    }
+  };
+
+  return (
+    <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-30 animate-slide-up">
+      <button
+        onClick={onClick}
+        className="bg-white rounded-full shadow-lg border border-gray-200 
+                   px-4 py-2.5 flex items-center gap-3 
+                   hover:shadow-xl transition-all duration-200
+                   max-w-[90%]"
+      >
+        <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
+          <FiChevronDown className="w-5 h-5 text-white" />
+        </div>
+        <div className="text-left min-w-0">
+          <p className="text-xs text-gray-500 font-medium">{senderName}</p>
+          <p className="text-sm text-gray-800 truncate max-w-[180px]">
+            {getPreview()}
+          </p>
+        </div>
+        <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full flex-shrink-0 animate-pulse">
+          ใหม่
+        </span>
+      </button>
     </div>
   );
 }
@@ -226,6 +479,57 @@ export default function InboxPage() {
   // Image Modal state
   const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
 
+  // Emoji & Sticker Picker state
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+  const [showStickerPicker, setShowStickerPicker] = useState(false);
+
+  // ============================================
+  // Scroll & New Message Bubble State
+  // ============================================
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [pendingNewMessage, setPendingNewMessage] = useState<Message | null>(null);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const lastScrollTop = useRef(0);
+
+  // Scroll to bottom function
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior });
+    }
+    setPendingNewMessage(null);
+  }, []);
+
+  // ตรวจสอบว่าอยู่ใกล้ล่างสุดหรือไม่
+  const isNearBottom = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return true;
+    
+    const threshold = 100;
+    return container.scrollHeight - container.scrollTop - container.clientHeight < threshold;
+  }, []);
+
+  // Handle scroll - ตรวจจับว่าผู้ใช้กำลังเลื่อนขึ้นหรือไม่
+  const handleScroll = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+
+    const currentScrollTop = container.scrollTop;
+    
+    // ถ้าเลื่อนขึ้น (scroll position ลดลง) = กำลังดูข้อความเก่า
+    if (currentScrollTop < lastScrollTop.current) {
+      setIsUserScrolling(true);
+    }
+    
+    // ถ้าอยู่ใกล้ล่างสุด = หยุด scrolling mode
+    if (isNearBottom()) {
+      setIsUserScrolling(false);
+      setPendingNewMessage(null);
+    }
+    
+    lastScrollTop.current = currentScrollTop;
+  }, [isNearBottom]);
+
   // Helper function สำหรับสร้าง preview
   const getMessagePreview = (message: any): string => {
     switch (message.message_type) {
@@ -243,10 +547,15 @@ export default function InboxPage() {
 
   // Ref สำหรับเก็บ selectedConversation ล่าสุด
   const selectedConversationRef = useRef<Conversation | null>(null);
+  const isUserScrollingRef = useRef(false);
   
   useEffect(() => {
     selectedConversationRef.current = selectedConversation;
   }, [selectedConversation]);
+
+  useEffect(() => {
+    isUserScrollingRef.current = isUserScrolling;
+  }, [isUserScrolling]);
 
   const handleSSEEvent = useCallback((event: any) => {
     console.log('📥 SSE Event:', event.type, event.data);
@@ -255,21 +564,30 @@ export default function InboxPage() {
       case 'new_message':
         const currentConv = selectedConversationRef.current;
         
-        // เพิ่มข้อความใหม่ถ้าเป็น conversation ที่กำลังดูอยู่ (ทุก status)
+        // เพิ่มข้อความใหม่ถ้าเป็น conversation ที่กำลังดูอยู่
         if (currentConv && event.data.conversation_id === currentConv.id) {
           setMessages(prev => {
-            // ตรวจสอบว่ามีข้อความนี้อยู่แล้วหรือไม่
             if (prev.some(m => m.id === event.data.message.id)) {
               return prev;
             }
             return [...prev, event.data.message];
           });
           
-          // ถ้ากำลังดู conversation นี้อยู่และเป็นข้อความขาเข้า ให้ mark as read
+          // ✅ ถ้าเป็นข้อความขาเข้า
           if (event.data.message.direction === 'incoming') {
+            // ถ้าผู้ใช้กำลังดูข้อความเก่าอยู่ (ไม่อยู่ล่างสุด) → แสดง bubble
+            if (isUserScrollingRef.current) {
+              setPendingNewMessage(event.data.message);
+            } else {
+              // อยู่ล่างสุดอยู่แล้ว → auto scroll
+              setTimeout(() => scrollToBottom('smooth'), 50);
+            }
+            
+            // Mark as read
             fetch(`/api/messages/conversations/${currentConv.id}/read`, { method: 'POST' })
               .catch(err => console.error('Mark as read error:', err));
           }
+          // ข้อความขาออกไม่ต้อง auto scroll ที่นี่ (จัดการใน handleSendMessage แล้ว)
         }
         
         // Play notification sound เฉพาะข้อความขาเข้าและไม่ได้ดู conversation นี้อยู่
@@ -282,16 +600,13 @@ export default function InboxPage() {
         break;
         
       case 'conversation_update':
-        // อัพเดท conversation ใน list (ใช้ข้อมูลจาก server รวมถึง unread_count)
         setConversations(prev => {
           const index = prev.findIndex(c => c.id === event.data.id);
           if (index >= 0) {
             const newConvs = [...prev];
-            // Merge ข้อมูลใหม่จาก server (รวมถึง unread_count, status, last_message_preview)
             newConvs[index] = { 
               ...newConvs[index], 
               ...event.data,
-              // รักษา nested objects
               channel: event.data.channel || newConvs[index].channel,
               line_user: event.data.line_user || newConvs[index].line_user,
               tags: event.data.tags || newConvs[index].tags
@@ -303,7 +618,6 @@ export default function InboxPage() {
           return prev;
         });
         
-        // อัพเดท selectedConversation ถ้ากำลังดูอยู่
         const currentConvUpdate = selectedConversationRef.current;
         if (currentConvUpdate && currentConvUpdate.id === event.data.id) {
           setSelectedConversation(current => current ? { 
@@ -317,9 +631,7 @@ export default function InboxPage() {
         break;
         
       case 'new_conversation':
-        // เพิ่ม conversation ใหม่เข้า list
         setConversations(prev => {
-          // ตรวจสอบว่ามีอยู่แล้วหรือไม่
           if (prev.some(c => c.id === event.data.id)) {
             return prev;
           }
@@ -331,7 +643,7 @@ export default function InboxPage() {
         playNotificationSound();
         break;
     }
-  }, []);
+  }, [scrollToBottom]);
 
   const connectSSE = useCallback(() => {
     if (eventSourceRef.current) {
@@ -382,7 +694,6 @@ export default function InboxPage() {
     return audioContextRef.current;
   };
 
-  // Initialize audio on first user interaction
   useEffect(() => {
     const handleUserGesture = () => {
       initAudioContext();
@@ -413,15 +724,12 @@ export default function InboxPage() {
       oscillator.connect(gainNode);
       gainNode.connect(audioContext.destination);
       
-      // ตั้งค่าเสียง
       oscillator.frequency.value = 800;
       oscillator.type = 'sine';
       
-      // ตั้งค่า volume และ fade out
       gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
       gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
       
-      // เล่นเสียง
       oscillator.start(audioContext.currentTime);
       oscillator.stop(audioContext.currentTime + 0.3);
     } catch (e) {
@@ -435,14 +743,28 @@ export default function InboxPage() {
     fetchTags();
   }, []);
 
+  // ✅ เมื่อเปลี่ยน conversation → scroll ลงล่างสุด
   useEffect(() => {
     if (selectedConversation) {
       fetchMessages(selectedConversation.id);
       fetchQuickReplies(selectedConversation.channel_id);
       markAsRead(selectedConversation.id);
       setConversationTags(selectedConversation.tags?.map(t => t.id) || []);
+      // Reset states
+      setPendingNewMessage(null);
+      setIsUserScrolling(false);
     }
-  }, [selectedConversation]);
+  }, [selectedConversation?.id]);
+
+  // ✅ Scroll ลงล่างสุดเมื่อโหลด messages เสร็จ (ครั้งแรกเข้า conversation)
+  useEffect(() => {
+    if (messages.length > 0 && selectedConversation) {
+      // ใช้ setTimeout เพื่อให้ DOM render เสร็จก่อน
+      setTimeout(() => {
+        scrollToBottom('instant');
+      }, 100);
+    }
+  }, [selectedConversation?.id, messages.length > 0]);
 
   const fetchChannels = async () => {
     try {
@@ -540,6 +862,8 @@ export default function InboxPage() {
         setNewMessage('');
         fetchMessages(selectedConversation.id);
         fetchConversations();
+        // ✅ หลังส่งข้อความ scroll ลงล่างสุดเสมอ
+        setTimeout(() => scrollToBottom('smooth'), 150);
       } else {
         Swal.fire({
           icon: 'error',
@@ -556,6 +880,49 @@ export default function InboxPage() {
     } finally {
       setSendingMessage(false);
     }
+  };
+
+  // ✅ ส่ง Sticker
+  const handleSendSticker = async (packageId: string, stickerId: string) => {
+    if (!selectedConversation) return;
+
+    try {
+      const res = await fetch('/api/messages/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          conversation_id: selectedConversation.id,
+          message_type: 'sticker',
+          package_id: packageId,
+          sticker_id: stickerId,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.success) {
+        fetchMessages(selectedConversation.id);
+        fetchConversations();
+        setTimeout(() => scrollToBottom('smooth'), 150);
+      } else {
+        Swal.fire({
+          icon: 'error',
+          title: 'ส่งสติกเกอร์ไม่สำเร็จ',
+          text: data.message || 'เกิดข้อผิดพลาด',
+        });
+      }
+    } catch (error) {
+      Swal.fire({
+        icon: 'error',
+        title: 'เกิดข้อผิดพลาด',
+        text: 'ไม่สามารถส่งสติกเกอร์ได้',
+      });
+    }
+  };
+
+  // ✅ เพิ่ม Emoji เข้า input
+  const handleEmojiSelect = (emoji: string) => {
+    setNewMessage(prev => prev + emoji);
+    inputRef.current?.focus();
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -590,6 +957,7 @@ export default function InboxPage() {
       if (sendData.success) {
         fetchMessages(selectedConversation.id);
         fetchConversations();
+        setTimeout(() => scrollToBottom('smooth'), 150);
       }
     } catch (error: any) {
       Swal.fire({
@@ -637,7 +1005,6 @@ export default function InboxPage() {
         body: JSON.stringify({ tags: newTags }),
       });
       
-      // อัพเดท conversation tags
       const selectedTags = allTags.filter(t => newTags.includes(t.id));
       setSelectedConversation(prev => prev ? { ...prev, tags: selectedTags } : null);
       setConversations(prev => prev.map(c => 
@@ -655,12 +1022,10 @@ export default function InboxPage() {
     inputRef.current?.focus();
   };
 
-  // Handle input change สำหรับ shortcut autocomplete
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setNewMessage(value);
 
-    // ตรวจจับ "/" เพื่อแสดง shortcut dropdown
     if (value.startsWith('/')) {
       const searchTerm = value.substring(1).toLowerCase();
       const matches = quickReplies.filter(qr => 
@@ -674,7 +1039,6 @@ export default function InboxPage() {
     }
   };
 
-  // Handle keyboard navigation for shortcut dropdown
   const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (!showShortcutDropdown || filteredShortcuts.length === 0) return;
 
@@ -935,8 +1299,12 @@ export default function InboxPage() {
               </div>
             </div>
 
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {/* Messages Container */}
+            <div 
+              ref={messagesContainerRef}
+              onScroll={handleScroll}
+              className="flex-1 overflow-y-auto p-6 space-y-4 relative"
+            >
               {messages.map(msg => (
                 <div
                   key={msg.id}
@@ -957,28 +1325,29 @@ export default function InboxPage() {
                     )}
                     {msg.message_type === 'image' && msg.media_url && (
                       <img 
-                        src={msg.media_url} 
+                        src={getMediaUrl(msg.media_url)} 
                         alt="Image" 
                         className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
                         style={{ maxWidth: '250px' }}
-                        onClick={() => setImageModalUrl(msg.media_url!)}
+                        onClick={() => setImageModalUrl(getMediaUrl(msg.media_url)!)}
                         onError={(e) => {
-                          // ถ้าโหลดรูปไม่ได้ ซ่อนรูป
                           const target = e.target as HTMLImageElement;
-                          target.style.display = 'none';
+                          target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150" viewBox="0 0 200 150"><rect fill="%23f3f4f6" width="200" height="150"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="%239ca3af" font-size="14">รูปภาพไม่พร้อมใช้งาน</text></svg>';
+                          target.style.cursor = 'default';
+                          target.onclick = null;
                         }}
                       />
                     )}
                     {msg.message_type === 'video' && msg.media_url && (
                       <video 
-                        src={msg.media_url}
+                        src={getMediaUrl(msg.media_url)}
                         controls
                         className="max-w-full rounded-lg"
                         style={{ maxWidth: '250px' }}
                       />
                     )}
                     {msg.message_type === 'audio' && msg.media_url && (
-                      <audio src={msg.media_url} controls className="w-full" />
+                      <audio src={getMediaUrl(msg.media_url)} controls className="w-full" />
                     )}
                     {msg.message_type === 'sticker' && (
                       <img 
@@ -1030,7 +1399,19 @@ export default function InboxPage() {
                   </div>
                 </div>
               ))}
+              
+              {/* Scroll anchor */}
+              <div ref={messagesEndRef} />
             </div>
+
+            {/* ✅ New Message Bubble - แสดงนอก messages container */}
+            {pendingNewMessage && (
+              <NewMessageBubble 
+                message={pendingNewMessage}
+                senderName={selectedConversation.line_user?.display_name || 'Unknown'}
+                onClick={() => scrollToBottom('smooth')}
+              />
+            )}
 
             {/* Message Input */}
             <form onSubmit={handleSendMessage} className="bg-white border-t border-gray-200 p-4">
@@ -1062,7 +1443,8 @@ export default function InboxPage() {
                 </div>
               )}
               
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-2">
+                {/* Image Upload */}
                 <input
                   type="file"
                   accept="image/*"
@@ -1073,9 +1455,58 @@ export default function InboxPage() {
                 <label
                   htmlFor="image-upload"
                   className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
+                  title="ส่งรูปภาพ"
                 >
                   <FiImage className="w-5 h-5 text-gray-500" />
                 </label>
+
+                {/* Emoji Picker */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowEmojiPicker(!showEmojiPicker);
+                      setShowStickerPicker(false);
+                    }}
+                    className={`p-2 hover:bg-gray-100 rounded-lg ${showEmojiPicker ? 'bg-gray-100' : ''}`}
+                    title="Emoji"
+                  >
+                    <FiSmile className="w-5 h-5 text-gray-500" />
+                  </button>
+                  {showEmojiPicker && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowEmojiPicker(false)} />
+                      <EmojiPicker 
+                        onSelect={handleEmojiSelect} 
+                        onClose={() => setShowEmojiPicker(false)} 
+                      />
+                    </>
+                  )}
+                </div>
+
+                {/* Sticker Picker */}
+                <div className="relative">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowStickerPicker(!showStickerPicker);
+                      setShowEmojiPicker(false);
+                    }}
+                    className={`p-2 hover:bg-gray-100 rounded-lg ${showStickerPicker ? 'bg-gray-100' : ''}`}
+                    title="LINE Sticker"
+                  >
+                    <span className="text-lg">🐻</span>
+                  </button>
+                  {showStickerPicker && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setShowStickerPicker(false)} />
+                      <StickerPicker 
+                        onSelect={handleSendSticker} 
+                        onClose={() => setShowStickerPicker(false)} 
+                      />
+                    </>
+                  )}
+                </div>
                 
                 {/* Quick Reply Button */}
                 <button
@@ -1146,6 +1577,23 @@ export default function InboxPage() {
           </div>
         )}
       </div>
+      
+      {/* CSS Animation */}
+      <style jsx global>{`
+        @keyframes slideUp {
+          from {
+            opacity: 0;
+            transform: translateX(-50%) translateY(20px);
+          }
+          to {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+          }
+        }
+        .animate-slide-up {
+          animation: slideUp 0.3s ease-out;
+        }
+      `}</style>
     </div>
   );
 }

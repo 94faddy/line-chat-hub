@@ -17,9 +17,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     // สร้าง file path จาก segments
-    // /api/media/2026/01/file.jpg -> ./uploads/2026/01/file.jpg
+    // /api/media/2026/01/file.jpg -> ./public/uploads/2026/01/file.jpg
     const relativePath = pathSegments.join('/');
-    const filePath = path.join(process.cwd(), 'uploads', relativePath);
+    
+    // ✅ แก้ไข: เพิ่ม 'public' ให้ตรงกับ upload path
+    const filePath = path.join(process.cwd(), 'public', 'uploads', relativePath);
     
     console.log(`📁 [Media API] Serving: ${filePath}`);
 

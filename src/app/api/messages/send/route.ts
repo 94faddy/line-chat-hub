@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { conversation_id, message_type, content, media_url } = body;
+    const { conversation_id, message_type, content, media_url, package_id, sticker_id } = body;
 
     if (!conversation_id || !message_type) {
       return NextResponse.json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบ' }, { status: 400 });
@@ -56,12 +56,14 @@ export async function POST(request: NextRequest) {
     // สร้าง LINE message object
     let lineMessage: any;
     let processedMediaUrl = media_url;
+    let messagePreview = '';
     
     if (message_type === 'text') {
       if (!content) {
         return NextResponse.json({ success: false, message: 'กรุณากรอกข้อความ' }, { status: 400 });
       }
       lineMessage = { type: 'text', text: content };
+      messagePreview = content;
     } else if (message_type === 'image') {
       if (!media_url) {
         return NextResponse.json({ success: false, message: 'กรุณาระบุ URL รูปภาพ' }, { status: 400 });
@@ -75,11 +77,9 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
 
-      // สำหรับ ngrok หรือ URL ที่ใช้ /uploads/ ให้แปลงเป็น /api/media/
-      // เพื่อให้ LINE สามารถเข้าถึงรูปได้โดยไม่ต้องยืนยัน browser warning
+      // สำหรับ URL ที่ใช้ /uploads/ ให้แปลงเป็น /api/media/
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
       if (media_url.startsWith(baseUrl) && media_url.includes('/uploads/')) {
-        // แปลง /uploads/2026/01/xxx.png -> /api/media/2026/01/xxx.png
         processedMediaUrl = media_url.replace('/uploads/', '/api/media/');
       }
 
@@ -92,18 +92,17 @@ export async function POST(request: NextRequest) {
         originalContentUrl: processedMediaUrl,
         previewImageUrl: processedMediaUrl
       };
+      messagePreview = '[รูปภาพ]';
     } else if (message_type === 'video') {
       if (!media_url) {
         return NextResponse.json({ success: false, message: 'กรุณาระบุ URL วิดีโอ' }, { status: 400 });
       }
       
-      // แปลง URL สำหรับ video เช่นกัน
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
       if (media_url.startsWith(baseUrl) && media_url.includes('/uploads/')) {
         processedMediaUrl = media_url.replace('/uploads/', '/api/media/');
       }
       
-      // สร้าง preview image URL (ใช้ placeholder)
       const previewUrl = processedMediaUrl.replace(/\.[^/.]+$/, '.jpg');
       
       lineMessage = {
@@ -111,12 +110,12 @@ export async function POST(request: NextRequest) {
         originalContentUrl: processedMediaUrl,
         previewImageUrl: previewUrl
       };
+      messagePreview = '[วิดีโอ]';
     } else if (message_type === 'audio') {
       if (!media_url) {
         return NextResponse.json({ success: false, message: 'กรุณาระบุ URL เสียง' }, { status: 400 });
       }
       
-      // แปลง URL สำหรับ audio เช่นกัน
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
       if (media_url.startsWith(baseUrl) && media_url.includes('/uploads/')) {
         processedMediaUrl = media_url.replace('/uploads/', '/api/media/');
@@ -125,8 +124,23 @@ export async function POST(request: NextRequest) {
       lineMessage = {
         type: 'audio',
         originalContentUrl: processedMediaUrl,
-        duration: 60000 // default 60 seconds
+        duration: 60000
       };
+      messagePreview = '[เสียง]';
+    } else if (message_type === 'sticker') {
+      // ✅ รองรับการส่ง Sticker
+      if (!package_id || !sticker_id) {
+        return NextResponse.json({ success: false, message: 'กรุณาระบุ package_id และ sticker_id' }, { status: 400 });
+      }
+      
+      console.log('🎉 [Send Sticker] Package:', package_id, 'Sticker:', sticker_id);
+      
+      lineMessage = {
+        type: 'sticker',
+        packageId: package_id,
+        stickerId: sticker_id
+      };
+      messagePreview = '[สติกเกอร์]';
     } else {
       return NextResponse.json({ success: false, message: 'ประเภทข้อความไม่ถูกต้อง' }, { status: 400 });
     }
@@ -139,7 +153,6 @@ export async function POST(request: NextRequest) {
     } catch (lineError: any) {
       console.error('❌ [LINE Push] Error:', lineError.response?.data || lineError.message || lineError);
       
-      // ดึงข้อมูล error จาก LINE API
       const errorData = lineError.response?.data;
       let errorMessage = 'Unknown error';
       
@@ -159,16 +172,27 @@ export async function POST(request: NextRequest) {
     // ใช้เวลา Thailand timezone
     const thaiTime = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok' }).replace(' ', 'T');
 
-    // บันทึกข้อความลงฐานข้อมูล (เก็บ URL เดิม ไม่ใช่ processed URL)
+    // บันทึกข้อความลงฐานข้อมูล
     const result: any = await query(
       `INSERT INTO messages 
-       (conversation_id, channel_id, line_user_id, direction, message_type, content, media_url, sent_by, source_type, created_at) 
-       VALUES (?, ?, ?, 'outgoing', ?, ?, ?, ?, 'manual', ?)`,
-      [conversation_id, conv.channel_id, conv.line_user_id, message_type, content || null, media_url || null, payload.userId, thaiTime]
+       (conversation_id, channel_id, line_user_id, direction, message_type, content, media_url, sticker_id, package_id, sent_by, source_type, created_at) 
+       VALUES (?, ?, ?, 'outgoing', ?, ?, ?, ?, ?, ?, 'manual', ?)`,
+      [
+        conversation_id, 
+        conv.channel_id, 
+        conv.line_user_id, 
+        message_type, 
+        content || null, 
+        media_url || null, 
+        sticker_id || null,
+        package_id || null,
+        payload.userId, 
+        thaiTime
+      ]
     );
 
     // อัพเดทการสนทนา
-    const preview = message_type === 'text' ? content : `[${message_type}]`;
+    const preview = messagePreview || (message_type === 'text' ? content : `[${message_type}]`);
     await query(
       `UPDATE conversations SET last_message_preview = ?, last_message_at = ? WHERE id = ?`,
       [preview.substring(0, 100), thaiTime, conversation_id]
@@ -181,6 +205,8 @@ export async function POST(request: NextRequest) {
       message_type,
       content: content || null,
       media_url: media_url || null,
+      sticker_id: sticker_id || null,
+      package_id: package_id || null,
       source_type: 'manual',
       created_at: thaiTime
     };
