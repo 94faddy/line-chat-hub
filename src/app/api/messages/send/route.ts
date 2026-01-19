@@ -54,10 +54,42 @@ export async function POST(request: NextRequest) {
       if (!media_url) {
         return NextResponse.json({ success: false, message: 'กรุณาระบุ URL รูปภาพ' }, { status: 400 });
       }
+      
+      // ตรวจสอบว่า URL เป็น HTTPS
+      if (!media_url.startsWith('https://')) {
+        return NextResponse.json({ 
+          success: false, 
+          message: 'URL รูปภาพต้องเป็น HTTPS เท่านั้น' 
+        }, { status: 400 });
+      }
+
+      console.log('📸 [Send Image] URL:', media_url);
+      console.log('📸 [Send Image] Target user:', conv.target_user_id);
+      
       lineMessage = {
         type: 'image',
         originalContentUrl: media_url,
         previewImageUrl: media_url
+      };
+    } else if (message_type === 'video') {
+      if (!media_url) {
+        return NextResponse.json({ success: false, message: 'กรุณาระบุ URL วิดีโอ' }, { status: 400 });
+      }
+      
+      lineMessage = {
+        type: 'video',
+        originalContentUrl: media_url,
+        previewImageUrl: media_url.replace(/\.[^/.]+$/, '.jpg') // ใช้ thumbnail
+      };
+    } else if (message_type === 'audio') {
+      if (!media_url) {
+        return NextResponse.json({ success: false, message: 'กรุณาระบุ URL เสียง' }, { status: 400 });
+      }
+      
+      lineMessage = {
+        type: 'audio',
+        originalContentUrl: media_url,
+        duration: 60000 // default 60 seconds
       };
     } else {
       return NextResponse.json({ success: false, message: 'ประเภทข้อความไม่ถูกต้อง' }, { status: 400 });
@@ -65,12 +97,26 @@ export async function POST(request: NextRequest) {
 
     // ส่งข้อความไปยัง LINE
     try {
+      console.log('📤 [LINE Push] Sending message:', JSON.stringify(lineMessage));
       await pushMessage(conv.channel_access_token, conv.target_user_id, lineMessage);
+      console.log('✅ [LINE Push] Message sent successfully');
     } catch (lineError: any) {
-      console.error('LINE push error:', lineError);
+      console.error('❌ [LINE Push] Error:', lineError.response?.data || lineError.message || lineError);
+      
+      // ดึงข้อมูล error จาก LINE API
+      const errorData = lineError.response?.data;
+      let errorMessage = 'Unknown error';
+      
+      if (errorData) {
+        errorMessage = errorData.message || JSON.stringify(errorData);
+        console.error('LINE API Error Details:', errorData);
+      } else {
+        errorMessage = lineError.message;
+      }
+      
       return NextResponse.json({ 
         success: false, 
-        message: `ไม่สามารถส่งข้อความได้: ${lineError.message || 'Unknown error'}` 
+        message: `ไม่สามารถส่งข้อความได้: ${errorMessage}` 
       }, { status: 500 });
     }
 
@@ -99,6 +145,7 @@ export async function POST(request: NextRequest) {
       message_type,
       content: content || null,
       media_url: media_url || null,
+      source_type: 'manual',
       created_at: thaiTime
     };
 
@@ -109,8 +156,8 @@ export async function POST(request: NextRequest) {
       message: 'ส่งข้อความสำเร็จ',
       data: { id: result.insertId }
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Send message error:', error);
-    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด: ' + (error.message || 'Unknown') }, { status: 500 });
   }
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { FiPlus, FiTrash2, FiMail, FiCheck, FiX, FiUser } from 'react-icons/fi';
+import { FiPlus, FiTrash2, FiMail, FiCheck, FiX, FiUser, FiLink, FiCopy } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 
 interface TeamMember {
@@ -27,6 +27,8 @@ export default function TeamPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(true);
   const [showInviteModal, setShowInviteModal] = useState(false);
+  const [inviteMode, setInviteMode] = useState<'email' | 'link'>('link');
+  const [inviteLink, setInviteLink] = useState<string | null>(null);
   const [inviteForm, setInviteForm] = useState({
     email: '',
     channel_id: '' as string | number,
@@ -73,33 +75,47 @@ export default function TeamPage() {
   const handleInvite = async (e: React.FormEvent) => {
     e.preventDefault();
     setInviting(true);
+    setInviteLink(null);
 
     try {
+      const body: any = {
+        channel_id: inviteForm.channel_id || null,
+        permissions: inviteForm.permissions,
+      };
+
+      // ถ้าเป็นโหมด email ให้ส่ง email ด้วย
+      if (inviteMode === 'email' && inviteForm.email) {
+        body.email = inviteForm.email;
+      }
+
       const res = await fetch('/api/team/invite', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(inviteForm),
+        body: JSON.stringify(body),
       });
 
       const data = await res.json();
 
       if (data.success) {
-        Swal.fire({
-          icon: 'success',
-          title: 'ส่งคำเชิญสำเร็จ',
-          text: 'ระบบได้ส่งอีเมลเชิญไปยังผู้ใช้แล้ว',
-        });
-        setShowInviteModal(false);
-        setInviteForm({
-          email: '',
-          channel_id: '',
-          permissions: {
-            can_reply: true,
-            can_view_all: false,
-            can_manage_tags: false,
-            can_broadcast: false
-          }
-        });
+        if (inviteMode === 'link' && data.data?.invite_url) {
+          // แสดง invite link
+          setInviteLink(data.data.invite_url);
+          Swal.fire({
+            icon: 'success',
+            title: 'สร้างลิงก์เชิญสำเร็จ',
+            text: 'คัดลอกลิงก์ด้านล่างเพื่อส่งให้สมาชิก',
+            timer: 2000,
+            showConfirmButton: false,
+          });
+        } else {
+          Swal.fire({
+            icon: 'success',
+            title: 'ส่งคำเชิญสำเร็จ',
+            text: 'ระบบได้ส่งอีเมลเชิญไปยังผู้ใช้แล้ว',
+          });
+          setShowInviteModal(false);
+          resetForm();
+        }
         fetchMembers();
       } else {
         Swal.fire({
@@ -119,10 +135,39 @@ export default function TeamPage() {
     }
   };
 
+  const copyInviteLink = () => {
+    if (inviteLink) {
+      navigator.clipboard.writeText(inviteLink);
+      Swal.fire({
+        icon: 'success',
+        title: 'คัดลอกแล้ว',
+        timer: 1000,
+        showConfirmButton: false,
+        position: 'top-end',
+        toast: true,
+      });
+    }
+  };
+
+  const resetForm = () => {
+    setInviteForm({
+      email: '',
+      channel_id: '',
+      permissions: {
+        can_reply: true,
+        can_view_all: false,
+        can_manage_tags: false,
+        can_broadcast: false
+      }
+    });
+    setInviteLink(null);
+    setInviteMode('link');
+  };
+
   const handleRevoke = async (member: TeamMember) => {
     const result = await Swal.fire({
       title: 'ยืนยันการยกเลิกสิทธิ์?',
-      text: `ต้องการยกเลิกสิทธิ์ของ ${member.admin_name || member.admin_email} หรือไม่?`,
+      text: `ต้องการยกเลิกสิทธิ์ของ ${member.admin_name || member.admin_email || 'สมาชิก'} หรือไม่?`,
       icon: 'warning',
       showCancelButton: true,
       confirmButtonColor: '#EF4444',
@@ -172,7 +217,10 @@ export default function TeamPage() {
           <p className="text-gray-500">เพิ่มสมาชิกเพื่อช่วยตอบแชท</p>
         </div>
         <button
-          onClick={() => setShowInviteModal(true)}
+          onClick={() => {
+            resetForm();
+            setShowInviteModal(true);
+          }}
           className="btn btn-primary"
         >
           <FiPlus className="w-5 h-5 mr-2" />
@@ -189,7 +237,10 @@ export default function TeamPage() {
           <h3 className="text-lg font-semibold text-gray-900 mb-2">ยังไม่มีสมาชิกในทีม</h3>
           <p className="text-gray-500 mb-6">เชิญสมาชิกเพื่อช่วยตอบแชทจากลูกค้า</p>
           <button
-            onClick={() => setShowInviteModal(true)}
+            onClick={() => {
+              resetForm();
+              setShowInviteModal(true);
+            }}
             className="btn btn-primary"
           >
             <FiPlus className="w-5 h-5 mr-2" />
@@ -218,9 +269,11 @@ export default function TeamPage() {
                       </div>
                       <div>
                         <p className="font-medium text-gray-900">
-                          {member.admin_name || 'รอยืนยัน'}
+                          {member.admin_name || (member.admin_id ? 'รอยืนยัน' : 'รอรับคำเชิญ')}
                         </p>
-                        <p className="text-sm text-gray-500">{member.admin_email}</p>
+                        <p className="text-sm text-gray-500">
+                          {member.admin_email || (member.admin_id ? '-' : 'Invite Link')}
+                        </p>
                       </div>
                     </div>
                   </td>
@@ -234,8 +287,11 @@ export default function TeamPage() {
                       {member.permissions?.can_reply && (
                         <span className="tag bg-blue-100 text-blue-700">ตอบแชท</span>
                       )}
+                      {member.permissions?.can_view_all && (
+                        <span className="tag bg-purple-100 text-purple-700">ดูทั้งหมด</span>
+                      )}
                       {member.permissions?.can_broadcast && (
-                        <span className="tag bg-purple-100 text-purple-700">Broadcast</span>
+                        <span className="tag bg-orange-100 text-orange-700">Broadcast</span>
                       )}
                     </div>
                   </td>
@@ -274,25 +330,92 @@ export default function TeamPage() {
 
       {/* Invite Modal */}
       {showInviteModal && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4 animate-fade-in">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-xl max-w-md w-full animate-fade-in max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200">
               <h2 className="text-lg font-semibold">เชิญสมาชิกใหม่</h2>
             </div>
-            <form onSubmit={handleInvite} className="p-6 space-y-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  อีเมล
-                </label>
-                <input
-                  type="email"
-                  value={inviteForm.email}
-                  onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })}
-                  placeholder="email@example.com"
-                  className="input"
-                  required
-                />
+            
+            {/* Mode Toggle */}
+            <div className="px-6 pt-4">
+              <div className="flex bg-gray-100 rounded-lg p-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInviteMode('link');
+                    setInviteLink(null);
+                  }}
+                  className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                    inviteMode === 'link' 
+                      ? 'bg-white shadow text-gray-900' 
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <FiLink className="w-4 h-4" />
+                  สร้างลิงก์เชิญ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setInviteMode('email');
+                    setInviteLink(null);
+                  }}
+                  className={`flex-1 py-2 px-4 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2 ${
+                    inviteMode === 'email' 
+                      ? 'bg-white shadow text-gray-900' 
+                      : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <FiMail className="w-4 h-4" />
+                  ส่งอีเมล
+                </button>
               </div>
+            </div>
+
+            <form onSubmit={handleInvite} className="p-6 space-y-4">
+              {/* Email field - only show in email mode */}
+              {inviteMode === 'email' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    อีเมล
+                  </label>
+                  <input
+                    type="email"
+                    value={inviteForm.email}
+                    onChange={(e) => setInviteForm({ ...inviteForm, email: e.target.value })}
+                    placeholder="email@example.com"
+                    className="input"
+                    required={inviteMode === 'email'}
+                  />
+                </div>
+              )}
+
+              {/* Invite Link Display */}
+              {inviteLink && (
+                <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                  <label className="block text-sm font-medium text-green-800 mb-2">
+                    🔗 ลิงก์เชิญ (ส่งให้สมาชิก)
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="text"
+                      value={inviteLink}
+                      readOnly
+                      className="input flex-1 bg-white text-sm"
+                    />
+                    <button
+                      type="button"
+                      onClick={copyInviteLink}
+                      className="btn btn-primary px-3"
+                    >
+                      <FiCopy className="w-5 h-5" />
+                    </button>
+                  </div>
+                  <p className="text-xs text-green-600 mt-2">
+                    ลิงก์นี้มีอายุ 7 วัน ใครก็ตามที่มีลิงก์สามารถรับคำเชิญได้
+                  </p>
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -369,25 +492,35 @@ export default function TeamPage() {
               <div className="flex gap-3 pt-4">
                 <button
                   type="button"
-                  onClick={() => setShowInviteModal(false)}
+                  onClick={() => {
+                    setShowInviteModal(false);
+                    resetForm();
+                  }}
                   className="btn btn-secondary flex-1"
                 >
-                  ยกเลิก
+                  {inviteLink ? 'ปิด' : 'ยกเลิก'}
                 </button>
-                <button
-                  type="submit"
-                  disabled={inviting}
-                  className="btn btn-primary flex-1"
-                >
-                  {inviting ? (
-                    <span className="flex items-center gap-2">
-                      <div className="spinner w-4 h-4 border-white border-t-transparent" />
-                      กำลังส่ง...
-                    </span>
-                  ) : (
-                    'ส่งคำเชิญ'
-                  )}
-                </button>
+                {!inviteLink && (
+                  <button
+                    type="submit"
+                    disabled={inviting || (inviteMode === 'email' && !inviteForm.email)}
+                    className="btn btn-primary flex-1"
+                  >
+                    {inviting ? (
+                      <span className="flex items-center gap-2">
+                        <div className="spinner w-4 h-4 border-white border-t-transparent" />
+                        กำลังสร้าง...
+                      </span>
+                    ) : inviteMode === 'link' ? (
+                      <span className="flex items-center gap-2">
+                        <FiLink className="w-4 h-4" />
+                        สร้างลิงก์เชิญ
+                      </span>
+                    ) : (
+                      'ส่งคำเชิญ'
+                    )}
+                  </button>
+                )}
               </div>
             </form>
           </div>

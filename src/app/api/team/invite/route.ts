@@ -19,16 +19,67 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { email, channel_id, permissions } = body;
 
+    // สร้าง invite token
+    const inviteToken = generateVerificationToken();
+    
+    // กำหนดวันหมดอายุ (7 วัน)
+    const expiresAt = new Date();
+    expiresAt.setDate(expiresAt.getDate() + 7);
+    const expiresAtStr = expiresAt.toISOString().slice(0, 19).replace('T', ' ');
+
+    // ถ้าไม่มี email ให้สร้าง invite link แบบ public
     if (!email) {
-      return NextResponse.json({ success: false, message: 'กรุณากรอกอีเมล' }, { status: 400 });
+      // ตรวจสอบว่ามี pending invite ที่ยังไม่มี admin_id อยู่หรือไม่
+      const existingInvites = await query(
+        `SELECT id FROM admin_permissions 
+         WHERE owner_id = ? AND admin_id IS NULL AND status = 'pending'
+         AND (channel_id = ? OR (channel_id IS NULL AND ? IS NULL))`,
+        [payload.userId, channel_id || null, channel_id || null]
+      );
+
+      // ลบ invite เก่าที่ยังไม่มีคนรับ
+      if (Array.isArray(existingInvites) && existingInvites.length > 0) {
+        await query(
+          `DELETE FROM admin_permissions WHERE id = ?`,
+          [(existingInvites[0] as any).id]
+        );
+      }
+
+      // สร้าง permission พร้อม invite token แบบไม่มี admin_id
+      const result: any = await query(
+        `INSERT INTO admin_permissions (owner_id, admin_id, channel_id, permissions, status, invite_token, invite_expires_at)
+         VALUES (?, NULL, ?, ?, 'pending', ?, ?)`,
+        [payload.userId, channel_id || null, JSON.stringify(permissions || { can_reply: true }), inviteToken, expiresAtStr]
+      );
+
+      const inviteUrl = `${process.env.NEXT_PUBLIC_APP_URL}/auth/accept-invite?token=${inviteToken}`;
+
+      console.log(`🔗 Created public invite link for user ${payload.userId}`);
+
+      return NextResponse.json({
+        success: true,
+        message: 'สร้างลิงก์เชิญสำเร็จ',
+        data: {
+          invite_url: inviteUrl,
+          invite_token: inviteToken,
+          expires_at: expiresAtStr,
+          id: result.insertId
+        }
+      });
     }
 
+    // ถ้ามี email ให้ทำแบบเดิม
     // ค้นหาหรือสร้างผู้ใช้
     let users = await query('SELECT id, email, name FROM users WHERE email = ?', [email]);
     let adminId: number;
 
     if (Array.isArray(users) && users.length > 0) {
       adminId = (users[0] as any).id;
+      
+      // ตรวจสอบว่าเชิญตัวเองหรือเปล่า
+      if (adminId === payload.userId) {
+        return NextResponse.json({ success: false, message: 'ไม่สามารถเชิญตัวเองได้' }, { status: 400 });
+      }
     } else {
       // สร้างผู้ใช้ใหม่แบบ pending
       const result: any = await query(
@@ -50,14 +101,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'อีเมลนี้ได้รับเชิญแล้ว' }, { status: 400 });
     }
 
-    // สร้าง invite token
-    const inviteToken = generateVerificationToken();
-
     // สร้าง permission พร้อม invite token
     await query(
-      `INSERT INTO admin_permissions (owner_id, admin_id, channel_id, permissions, status, invite_token)
-       VALUES (?, ?, ?, ?, 'pending', ?)`,
-      [payload.userId, adminId, channel_id || null, JSON.stringify(permissions), inviteToken]
+      `INSERT INTO admin_permissions (owner_id, admin_id, channel_id, permissions, status, invite_token, invite_expires_at)
+       VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+      [payload.userId, adminId, channel_id || null, JSON.stringify(permissions || { can_reply: true }), inviteToken, expiresAtStr]
     );
 
     // ดึงข้อมูลเจ้าของ
@@ -76,8 +124,8 @@ export async function POST(request: NextRequest) {
       success: true,
       message: 'ส่งคำเชิญสำเร็จ'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Invite error:', error);
-    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด: ' + (error.message || 'Unknown') }, { status: 500 });
   }
 }
