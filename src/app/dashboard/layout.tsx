@@ -74,7 +74,7 @@ export default function DashboardLayout({
     { href: '/dashboard', icon: FiInbox, label: 'Inbox', badge: 0 },
     { href: '/dashboard/channels', icon: FiRadio, label: 'LINE Channels' },
     { href: '/dashboard/broadcast', icon: FiMessageCircle, label: 'Broadcast' },
-    { href: '/dashboard/auto-reply', icon: FiZap, label: 'Auto Reply' },
+    { href: '/dashboard/quick-replies', icon: FiZap, label: 'ข้อความตอบกลับ' },
     { href: '/dashboard/tags', icon: FiTag, label: 'Tags' },
     { href: '/dashboard/team', icon: FiUsers, label: 'Team' },
     { href: '/dashboard/settings', icon: FiSettings, label: 'Settings' },

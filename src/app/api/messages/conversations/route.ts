@@ -69,11 +69,39 @@ export async function GET(request: NextRequest) {
 
     const conversations = await query(sql, params);
 
-    // Parse JSON strings
+    // ดึง tags สำหรับแต่ละ conversation
+    const conversationIds = (conversations as any[]).map(c => c.id);
+    let tagsMap: Map<number, any[]> = new Map();
+
+    if (conversationIds.length > 0) {
+      const tagsResult = await query(
+        `SELECT ct.conversation_id, t.id, t.name, t.color
+         FROM conversation_tags ct
+         INNER JOIN tags t ON ct.tag_id = t.id
+         WHERE ct.conversation_id IN (${conversationIds.map(() => '?').join(',')})`,
+        conversationIds
+      );
+
+      if (Array.isArray(tagsResult)) {
+        tagsResult.forEach((tag: any) => {
+          if (!tagsMap.has(tag.conversation_id)) {
+            tagsMap.set(tag.conversation_id, []);
+          }
+          tagsMap.get(tag.conversation_id)?.push({
+            id: tag.id,
+            name: tag.name,
+            color: tag.color
+          });
+        });
+      }
+    }
+
+    // Parse JSON strings and add tags
     const formattedConversations = (conversations as any[]).map(conv => ({
       ...conv,
       channel: typeof conv.channel === 'string' ? JSON.parse(conv.channel) : conv.channel,
       line_user: typeof conv.line_user === 'string' ? JSON.parse(conv.line_user) : conv.line_user,
+      tags: tagsMap.get(conv.id) || []
     }));
 
     return NextResponse.json({ success: true, data: formattedConversations });

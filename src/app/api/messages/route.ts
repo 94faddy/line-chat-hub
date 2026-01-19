@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
     const messages = await query(
       `SELECT 
         id, direction, message_type, content, media_url, 
-        sticker_id, package_id, is_read, created_at
+        sticker_id, package_id, flex_content, source_type, is_read, created_at
        FROM messages 
        WHERE conversation_id = ? 
        ORDER BY created_at ASC`,

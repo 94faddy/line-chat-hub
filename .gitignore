@@ -1,5 +1,5 @@
 /.next
 /.output
 /node_modules
-.env
+/public
 package-lock.json

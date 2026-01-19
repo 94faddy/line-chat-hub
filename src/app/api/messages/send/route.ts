@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { verifyToken } from '@/lib/auth';
 import { pushMessage } from '@/lib/line';
+import { notifyNewMessage, notifyConversationUpdate } from '@/lib/notifier';
 
 // POST - ส่งข้อความ
 export async function POST(request: NextRequest) {
@@ -73,20 +74,35 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
+    // ใช้เวลา Thailand timezone
+    const thaiTime = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok' }).replace(' ', 'T');
+
     // บันทึกข้อความลงฐานข้อมูล
     const result: any = await query(
       `INSERT INTO messages 
-       (conversation_id, channel_id, line_user_id, direction, message_type, content, media_url, sent_by) 
-       VALUES (?, ?, ?, 'outgoing', ?, ?, ?, ?)`,
-      [conversation_id, conv.channel_id, conv.line_user_id, message_type, content || null, media_url || null, payload.userId]
+       (conversation_id, channel_id, line_user_id, direction, message_type, content, media_url, sent_by, source_type, created_at) 
+       VALUES (?, ?, ?, 'outgoing', ?, ?, ?, ?, 'manual', ?)`,
+      [conversation_id, conv.channel_id, conv.line_user_id, message_type, content || null, media_url || null, payload.userId, thaiTime]
     );
 
     // อัพเดทการสนทนา
     const preview = message_type === 'text' ? content : `[${message_type}]`;
     await query(
-      `UPDATE conversations SET last_message_preview = ?, last_message_at = NOW() WHERE id = ?`,
-      [preview.substring(0, 100), conversation_id]
+      `UPDATE conversations SET last_message_preview = ?, last_message_at = ? WHERE id = ?`,
+      [preview.substring(0, 100), thaiTime, conversation_id]
     );
+
+    // ส่ง realtime notification
+    const newMessage = {
+      id: result.insertId,
+      direction: 'outgoing',
+      message_type,
+      content: content || null,
+      media_url: media_url || null,
+      created_at: thaiTime
+    };
+
+    await notifyNewMessage(conv.channel_id, conversation_id, newMessage);
 
     return NextResponse.json({
       success: true,
