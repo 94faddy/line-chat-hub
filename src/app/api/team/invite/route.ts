@@ -29,10 +29,10 @@ export async function POST(request: NextRequest) {
 
     // ถ้าไม่มี email ให้สร้าง invite link แบบ public
     if (!email) {
-      // ตรวจสอบว่ามี pending invite ที่ยังไม่มี admin_id อยู่หรือไม่
+      // ตรวจสอบว่ามี pending invite ที่ใช้ owner_id เป็น placeholder อยู่หรือไม่
       const existingInvites = await query(
         `SELECT id FROM admin_permissions 
-         WHERE owner_id = ? AND admin_id IS NULL AND status = 'pending'
+         WHERE owner_id = ? AND admin_id = owner_id AND status = 'pending' AND invite_token IS NOT NULL
          AND (channel_id = ? OR (channel_id IS NULL AND ? IS NULL))`,
         [payload.userId, channel_id || null, channel_id || null]
       );
@@ -45,11 +45,14 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      // สร้าง permission พร้อม invite token แบบไม่มี admin_id
+      // สร้าง permission พร้อม invite token - ใช้ owner_id เป็น placeholder สำหรับ admin_id
+      // เมื่อ user รับ invite จะอัพเดท admin_id เป็น user ที่รับ
+      const permissionsData = { ...(permissions || { can_reply: true }), is_public_invite: true };
+      
       const result: any = await query(
         `INSERT INTO admin_permissions (owner_id, admin_id, channel_id, permissions, status, invite_token, invite_expires_at)
-         VALUES (?, NULL, ?, ?, 'pending', ?, ?)`,
-        [payload.userId, channel_id || null, JSON.stringify(permissions || { can_reply: true }), inviteToken, expiresAtStr]
+         VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
+        [payload.userId, payload.userId, channel_id || null, JSON.stringify(permissionsData), inviteToken, expiresAtStr]
       );
 
       const inviteUrl = `${process.env.NEXT_PUBLIC_APP_URL}/auth/accept-invite?token=${inviteToken}`;
@@ -93,7 +96,7 @@ export async function POST(request: NextRequest) {
     // ตรวจสอบว่าเชิญซ้ำหรือไม่
     const existing = await query(
       `SELECT id FROM admin_permissions 
-       WHERE owner_id = ? AND admin_id = ? AND (channel_id = ? OR (channel_id IS NULL AND ? IS NULL))`,
+       WHERE owner_id = ? AND admin_id = ? AND admin_id != owner_id AND (channel_id = ? OR (channel_id IS NULL AND ? IS NULL))`,
       [payload.userId, adminId, channel_id || null, channel_id || null]
     );
 

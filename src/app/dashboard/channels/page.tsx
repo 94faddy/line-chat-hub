@@ -1,28 +1,28 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { FiPlus, FiTrash2, FiEdit2, FiCheck, FiCopy, FiMessageCircle, FiUsers, FiEye, FiEyeOff } from 'react-icons/fi';
+import { useRouter } from 'next/navigation';
+import { FiPlus, FiTrash2, FiEdit2, FiCheck, FiMessageCircle, FiUsers, FiSettings } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 
 interface Channel {
   id: number;
   channel_name: string;
   channel_id: string;
-  channel_access_token: string;
-  channel_secret: string;
-  webhook_url: string;
-  is_active: boolean;
+  basic_id?: string;
+  picture_url?: string;
+  webhook_url?: string;
+  status: string;
   created_at: string;
   message_count?: number;
   user_count?: number;
 }
 
 export default function ChannelsPage() {
+  const router = useRouter();
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddModal, setShowAddModal] = useState(false);
-  const [editingChannel, setEditingChannel] = useState<Channel | null>(null);
-  const [showTokens, setShowTokens] = useState<{ [key: number]: boolean }>({});
   const [form, setForm] = useState({
     channel_name: '',
     channel_id: '',
@@ -54,11 +54,8 @@ export default function ChannelsPage() {
     setSaving(true);
 
     try {
-      const url = editingChannel ? `/api/channels/${editingChannel.id}` : '/api/channels';
-      const method = editingChannel ? 'PUT' : 'POST';
-
-      const res = await fetch(url, {
-        method,
+      const res = await fetch('/api/channels', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(form),
       });
@@ -68,12 +65,16 @@ export default function ChannelsPage() {
       if (data.success) {
         Swal.fire({
           icon: 'success',
-          title: editingChannel ? 'อัพเดทสำเร็จ' : 'เพิ่ม Channel สำเร็จ',
-          timer: 1500,
-          showConfirmButton: false,
+          title: 'เพิ่ม Channel สำเร็จ',
+          html: `
+            <p class="mb-4">กรุณานำ Webhook URL ไปตั้งค่าที่ LINE Developers Console</p>
+            <div class="bg-gray-100 p-3 rounded-lg text-sm text-left break-all font-mono">
+              ${data.data.webhook_url}
+            </div>
+          `,
+          confirmButtonColor: '#06C755',
         });
         setShowAddModal(false);
-        setEditingChannel(null);
         resetForm();
         fetchChannels();
       } else {
@@ -169,17 +170,6 @@ export default function ChannelsPage() {
     }
   };
 
-  const handleEdit = (channel: Channel) => {
-    setEditingChannel(channel);
-    setForm({
-      channel_name: channel.channel_name,
-      channel_id: channel.channel_id,
-      channel_access_token: channel.channel_access_token,
-      channel_secret: channel.channel_secret,
-    });
-    setShowAddModal(true);
-  };
-
   const resetForm = () => {
     setForm({
       channel_name: '',
@@ -187,28 +177,6 @@ export default function ChannelsPage() {
       channel_access_token: '',
       channel_secret: ''
     });
-  };
-
-  const copyToClipboard = (text: string, label: string) => {
-    navigator.clipboard.writeText(text);
-    Swal.fire({
-      icon: 'success',
-      title: `คัดลอก ${label} แล้ว`,
-      timer: 1000,
-      showConfirmButton: false,
-      toast: true,
-      position: 'top-end',
-    });
-  };
-
-  const toggleShowToken = (channelId: number) => {
-    setShowTokens(prev => ({ ...prev, [channelId]: !prev[channelId] }));
-  };
-
-  const maskToken = (token: string) => {
-    if (!token) return '';
-    if (token.length <= 10) return '••••••••••';
-    return token.substring(0, 5) + '••••••••' + token.substring(token.length - 5);
   };
 
   if (loading) {
@@ -230,7 +198,6 @@ export default function ChannelsPage() {
         <button
           onClick={() => {
             resetForm();
-            setEditingChannel(null);
             setShowAddModal(true);
           }}
           className="btn btn-primary"
@@ -266,14 +233,30 @@ export default function ChannelsPage() {
               <div className="flex items-start justify-between">
                 <div className="flex-1">
                   <div className="flex items-center gap-3 mb-3">
-                    <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
-                      <FiMessageCircle className="w-6 h-6 text-green-600" />
-                    </div>
+                    {channel.picture_url ? (
+                      <img 
+                        src={channel.picture_url} 
+                        alt={channel.channel_name}
+                        className="w-12 h-12 rounded-xl object-cover"
+                      />
+                    ) : (
+                      <div className="w-12 h-12 bg-green-100 rounded-xl flex items-center justify-center">
+                        <FiMessageCircle className="w-6 h-6 text-green-600" />
+                      </div>
+                    )}
                     <div>
                       <h3 className="text-lg font-semibold text-gray-900">{channel.channel_name}</h3>
-                      <p className="text-sm text-gray-500">Channel ID: {channel.channel_id}</p>
+                      <div className="flex items-center gap-2 text-sm text-gray-500">
+                        <span>Channel ID: {channel.channel_id}</span>
+                        {channel.basic_id && (
+                          <>
+                            <span>•</span>
+                            <span>{channel.basic_id}</span>
+                          </>
+                        )}
+                      </div>
                     </div>
-                    {channel.is_active ? (
+                    {channel.status === 'active' ? (
                       <span className="badge badge-green ml-2">
                         <FiCheck className="w-3 h-3 mr-1" />
                         Active
@@ -295,73 +278,24 @@ export default function ChannelsPage() {
                     </div>
                   </div>
 
-                  {/* Tokens */}
-                  <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                    <div>
-                      <label className="text-xs font-medium text-gray-500 block mb-1">Access Token</label>
-                      <div className="flex items-center gap-2">
-                        <code className="flex-1 text-sm bg-white px-3 py-1.5 rounded border truncate">
-                          {showTokens[channel.id] ? channel.channel_access_token : maskToken(channel.channel_access_token)}
-                        </code>
-                        <button
-                          onClick={() => toggleShowToken(channel.id)}
-                          className="p-1.5 text-gray-500 hover:text-gray-700"
-                          title={showTokens[channel.id] ? 'ซ่อน' : 'แสดง'}
-                        >
-                          {showTokens[channel.id] ? <FiEyeOff className="w-4 h-4" /> : <FiEye className="w-4 h-4" />}
-                        </button>
-                        <button
-                          onClick={() => copyToClipboard(channel.channel_access_token, 'Access Token')}
-                          className="p-1.5 text-gray-500 hover:text-gray-700"
-                          title="คัดลอก"
-                        >
-                          <FiCopy className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium text-gray-500 block mb-1">Channel Secret</label>
-                      <div className="flex items-center gap-2">
-                        <code className="flex-1 text-sm bg-white px-3 py-1.5 rounded border truncate">
-                          {showTokens[channel.id] ? channel.channel_secret : maskToken(channel.channel_secret)}
-                        </code>
-                        <button
-                          onClick={() => copyToClipboard(channel.channel_secret, 'Channel Secret')}
-                          className="p-1.5 text-gray-500 hover:text-gray-700"
-                          title="คัดลอก"
-                        >
-                          <FiCopy className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                    {channel.webhook_url && (
-                      <div>
-                        <label className="text-xs font-medium text-gray-500 block mb-1">Webhook URL</label>
-                        <div className="flex items-center gap-2">
-                          <code className="flex-1 text-sm bg-white px-3 py-1.5 rounded border truncate">
-                            {channel.webhook_url}
-                          </code>
-                          <button
-                            onClick={() => copyToClipboard(channel.webhook_url, 'Webhook URL')}
-                            className="p-1.5 text-gray-500 hover:text-gray-700"
-                            title="คัดลอก"
-                          >
-                            <FiCopy className="w-4 h-4" />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
+                  {/* Created at */}
+                  <p className="text-xs text-gray-400">
+                    สร้างเมื่อ: {new Date(channel.created_at).toLocaleDateString('th-TH', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric'
+                    })}
+                  </p>
                 </div>
 
                 {/* Actions */}
                 <div className="flex gap-2 ml-4">
                   <button
-                    onClick={() => handleEdit(channel)}
+                    onClick={() => router.push(`/dashboard/channels/${channel.id}`)}
                     className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                    title="แก้ไข"
+                    title="ตั้งค่า"
                   >
-                    <FiEdit2 className="w-5 h-5" />
+                    <FiSettings className="w-5 h-5" />
                   </button>
                   <button
                     onClick={() => handleDelete(channel)}
@@ -377,14 +311,12 @@ export default function ChannelsPage() {
         </div>
       )}
 
-      {/* Add/Edit Modal */}
+      {/* Add Modal */}
       {showAddModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-xl max-w-lg w-full animate-fade-in max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b border-gray-200">
-              <h2 className="text-lg font-semibold">
-                {editingChannel ? 'แก้ไข Channel' : 'เพิ่ม LINE Channel'}
-              </h2>
+              <h2 className="text-lg font-semibold">เพิ่ม LINE Channel</h2>
             </div>
             
             <form onSubmit={handleSubmit} className="p-6 space-y-4">
@@ -462,7 +394,6 @@ export default function ChannelsPage() {
                   type="button"
                   onClick={() => {
                     setShowAddModal(false);
-                    setEditingChannel(null);
                     resetForm();
                   }}
                   className="btn btn-secondary flex-1"
@@ -479,8 +410,6 @@ export default function ChannelsPage() {
                       <div className="spinner w-4 h-4 border-white border-t-transparent" />
                       กำลังบันทึก...
                     </span>
-                  ) : editingChannel ? (
-                    'อัพเดท'
                   ) : (
                     'เพิ่ม Channel'
                   )}

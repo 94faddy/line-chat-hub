@@ -2,14 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { verifyToken } from '@/lib/auth';
 
-interface RouteParams {
-  params: { token: string };
-}
-
-// GET - ดึงข้อมูล invite
-export async function GET(request: NextRequest, { params }: RouteParams) {
+// GET - ดึงข้อมูล invite จาก token
+export async function GET(request: NextRequest) {
   try {
-    const { token } = params;
+    const { searchParams } = new URL(request.url);
+    const token = searchParams.get('token');
 
     if (!token) {
       return NextResponse.json({ success: false, message: 'Token is required' }, { status: 400 });
@@ -47,6 +44,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    // ตรวจสอบว่าเป็น public invite หรือไม่
+    let permissions = {};
+    try {
+      permissions = typeof invite.permissions === 'string' ? JSON.parse(invite.permissions) : invite.permissions || {};
+    } catch {
+      permissions = {};
+    }
+    const isPublicInvite = (permissions as any).is_public_invite === true;
+
     return NextResponse.json({
       success: true,
       data: {
@@ -54,8 +60,9 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         owner_name: invite.owner_name,
         owner_email: invite.owner_email,
         channel_name: invite.channel_name || 'ทุก Channel',
-        permissions: invite.permissions,
-        expires_at: invite.invite_expires_at
+        permissions: permissions,
+        expires_at: invite.invite_expires_at,
+        is_public_invite: isPublicInvite
       }
     });
   } catch (error: any) {
@@ -65,9 +72,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 }
 
 // POST - Accept invite
-export async function POST(request: NextRequest, { params }: RouteParams) {
+export async function POST(request: NextRequest) {
   try {
-    const { token } = params;
+    const body = await request.json();
+    const { token } = body;
+
+    if (!token) {
+      return NextResponse.json({ success: false, message: 'Token is required' }, { status: 400 });
+    }
     
     // ต้อง login ก่อน
     const authToken = request.cookies.get('auth_token')?.value;
@@ -117,18 +129,29 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // ตรวจสอบว่า user รับคำเชิญตัวเอง
+    // ตรวจสอบว่า user รับคำเชิญตัวเอง (ยกเว้นกรณี public invite)
+    let permissions = {};
+    try {
+      permissions = typeof invite.permissions === 'string' ? JSON.parse(invite.permissions) : invite.permissions || {};
+    } catch {
+      permissions = {};
+    }
+    const isPublicInvite = (permissions as any).is_public_invite === true;
+
     if (invite.owner_id === payload.userId) {
-      return NextResponse.json({ 
-        success: false, 
-        message: 'ไม่สามารถรับคำเชิญตัวเองได้' 
-      }, { status: 400 });
+      // ถ้าเป็น public invite ให้ error
+      if (isPublicInvite) {
+        return NextResponse.json({ 
+          success: false, 
+          message: 'ไม่สามารถรับคำเชิญตัวเองได้' 
+        }, { status: 400 });
+      }
     }
 
     // ตรวจสอบว่า user นี้มี permission กับ owner นี้อยู่แล้วหรือไม่
     const existingPermission = await query(
       `SELECT id FROM admin_permissions 
-       WHERE owner_id = ? AND admin_id = ? AND status = 'active'`,
+       WHERE owner_id = ? AND admin_id = ? AND admin_id != owner_id AND status = 'active'`,
       [invite.owner_id, payload.userId]
     );
 
@@ -142,22 +165,25 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }, { status: 400 });
     }
 
-    // ถ้า invite มี admin_id แล้ว (เชิญผ่าน email) ต้องตรวจสอบว่าตรงกับ user ที่ login
-    if (invite.admin_id && invite.admin_id !== payload.userId) {
+    // ถ้า invite มี admin_id และไม่ใช่ public invite ต้องตรวจสอบว่าตรงกับ user ที่ login
+    if (!isPublicInvite && invite.admin_id && invite.admin_id !== payload.userId && invite.admin_id !== invite.owner_id) {
       return NextResponse.json({ 
         success: false, 
         message: 'คำเชิญนี้สำหรับ user อื่น' 
       }, { status: 403 });
     }
 
-    // อัพเดท permission
+    // อัพเดท permission - ลบ is_public_invite flag
+    const cleanPermissions = { ...permissions };
+    delete (cleanPermissions as any).is_public_invite;
+    
     const thaiTime = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok' }).replace(' ', 'T');
     
     await query(
       `UPDATE admin_permissions 
-       SET admin_id = ?, status = 'active', accepted_at = ?, invite_token = NULL
+       SET admin_id = ?, status = 'active', accepted_at = ?, invite_token = NULL, permissions = ?
        WHERE id = ?`,
-      [payload.userId, thaiTime, invite.id]
+      [payload.userId, thaiTime, JSON.stringify(cleanPermissions), invite.id]
     );
 
     console.log(`✅ User ${payload.userId} accepted invite from owner ${invite.owner_id}`);

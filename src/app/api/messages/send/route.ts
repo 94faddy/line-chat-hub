@@ -45,6 +45,8 @@ export async function POST(request: NextRequest) {
 
     // สร้าง LINE message object
     let lineMessage: any;
+    let processedMediaUrl = media_url;
+    
     if (message_type === 'text') {
       if (!content) {
         return NextResponse.json({ success: false, message: 'กรุณากรอกข้อความ' }, { status: 400 });
@@ -63,32 +65,57 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
 
-      console.log('📸 [Send Image] URL:', media_url);
+      // แปลง URL ให้ใช้ API media route แทน static path
+      // เพื่อ bypass ngrok browser warning
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+      if (media_url.startsWith(baseUrl) && media_url.includes('/uploads/')) {
+        // แปลง /uploads/2026/01/xxx.png -> /api/media/2026/01/xxx.png
+        processedMediaUrl = media_url.replace('/uploads/', '/api/media/');
+        console.log('📸 [Send Image] Converted URL:', processedMediaUrl);
+      }
+
+      console.log('📸 [Send Image] Original URL:', media_url);
+      console.log('📸 [Send Image] Processed URL:', processedMediaUrl);
       console.log('📸 [Send Image] Target user:', conv.target_user_id);
       
       lineMessage = {
         type: 'image',
-        originalContentUrl: media_url,
-        previewImageUrl: media_url
+        originalContentUrl: processedMediaUrl,
+        previewImageUrl: processedMediaUrl
       };
     } else if (message_type === 'video') {
       if (!media_url) {
         return NextResponse.json({ success: false, message: 'กรุณาระบุ URL วิดีโอ' }, { status: 400 });
       }
       
+      // แปลง URL สำหรับ video เช่นกัน
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+      if (media_url.startsWith(baseUrl) && media_url.includes('/uploads/')) {
+        processedMediaUrl = media_url.replace('/uploads/', '/api/media/');
+      }
+      
+      // สร้าง preview image URL (ใช้ thumbnail หรือ placeholder)
+      const previewUrl = processedMediaUrl.replace(/\.[^/.]+$/, '.jpg');
+      
       lineMessage = {
         type: 'video',
-        originalContentUrl: media_url,
-        previewImageUrl: media_url.replace(/\.[^/.]+$/, '.jpg') // ใช้ thumbnail
+        originalContentUrl: processedMediaUrl,
+        previewImageUrl: previewUrl
       };
     } else if (message_type === 'audio') {
       if (!media_url) {
         return NextResponse.json({ success: false, message: 'กรุณาระบุ URL เสียง' }, { status: 400 });
       }
       
+      // แปลง URL สำหรับ audio เช่นกัน
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+      if (media_url.startsWith(baseUrl) && media_url.includes('/uploads/')) {
+        processedMediaUrl = media_url.replace('/uploads/', '/api/media/');
+      }
+      
       lineMessage = {
         type: 'audio',
-        originalContentUrl: media_url,
+        originalContentUrl: processedMediaUrl,
         duration: 60000 // default 60 seconds
       };
     } else {
@@ -123,7 +150,7 @@ export async function POST(request: NextRequest) {
     // ใช้เวลา Thailand timezone
     const thaiTime = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok' }).replace(' ', 'T');
 
-    // บันทึกข้อความลงฐานข้อมูล
+    // บันทึกข้อความลงฐานข้อมูล (เก็บ URL เดิม ไม่ใช่ processed URL)
     const result: any = await query(
       `INSERT INTO messages 
        (conversation_id, channel_id, line_user_id, direction, message_type, content, media_url, sent_by, source_type, created_at) 
