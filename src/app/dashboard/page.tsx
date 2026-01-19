@@ -304,10 +304,41 @@ export default function InboxPage() {
     };
   }, [connectSSE]);
 
+  // Audio context สำหรับ notification sound
+  const audioContextRef = useRef<AudioContext | null>(null);
+  
+  const initAudioContext = () => {
+    if (!audioContextRef.current) {
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+    }
+    return audioContextRef.current;
+  };
+
+  // Initialize audio on first user interaction
+  useEffect(() => {
+    const handleUserGesture = () => {
+      initAudioContext();
+      document.removeEventListener('click', handleUserGesture);
+      document.removeEventListener('keydown', handleUserGesture);
+    };
+    
+    document.addEventListener('click', handleUserGesture);
+    document.addEventListener('keydown', handleUserGesture);
+    
+    return () => {
+      document.removeEventListener('click', handleUserGesture);
+      document.removeEventListener('keydown', handleUserGesture);
+    };
+  }, []);
+
   const playNotificationSound = () => {
     try {
-      // ใช้ Web Audio API สร้างเสียง notification
-      const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const audioContext = audioContextRef.current || initAudioContext();
+      
+      if (audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+      
       const oscillator = audioContext.createOscillator();
       const gainNode = audioContext.createGain();
       
@@ -315,7 +346,7 @@ export default function InboxPage() {
       gainNode.connect(audioContext.destination);
       
       // ตั้งค่าเสียง
-      oscillator.frequency.value = 800; // ความถี่ Hz
+      oscillator.frequency.value = 800;
       oscillator.type = 'sine';
       
       // ตั้งค่า volume และ fade out
