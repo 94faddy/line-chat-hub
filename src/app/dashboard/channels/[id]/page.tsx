@@ -152,8 +152,10 @@ export default function EditChannelPage() {
     return token.substring(0, showChars) + '••••••••' + token.substring(token.length - showChars);
   };
 
+  // สร้าง Webhook URL ใหม่ทุกครั้งจาก ENV (ไม่ใช้ค่าเก่าจาก DB)
   const getWebhookUrl = () => {
-    return channelData.webhook_url || `${process.env.NEXT_PUBLIC_APP_URL || 'https://chat.bevchat.in'}/api/webhook/${channelData.channel_id}`;
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'https://chat.bevchat.pro';
+    return `${baseUrl}/api/webhook/${channelData.channel_id}`;
   };
 
   if (loading) {

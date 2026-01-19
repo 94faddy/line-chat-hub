@@ -18,6 +18,11 @@ export default function AddChannelPage() {
   });
   const [webhookUrl, setWebhookUrl] = useState('');
 
+  // ดึง Base URL จาก ENV หรือใช้โดเมนจริง
+  const getBaseUrl = () => {
+    return process.env.NEXT_PUBLIC_APP_URL || 'https://chat.bevchat.pro';
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -173,14 +178,14 @@ export default function AddChannelPage() {
             <div className="flex items-center gap-2">
               <input
                 type="text"
-                value={`${process.env.NEXT_PUBLIC_APP_URL || 'https://chat.bevchat.in'}/api/webhook/${formData.channel_id}`}
+                value={`${getBaseUrl()}/api/webhook/${formData.channel_id}`}
                 className="input bg-white text-sm font-mono"
                 readOnly
               />
               <button
                 type="button"
                 onClick={() => {
-                  const url = `${process.env.NEXT_PUBLIC_APP_URL || 'https://chat.bevchat.in'}/api/webhook/${formData.channel_id}`;
+                  const url = `${getBaseUrl()}/api/webhook/${formData.channel_id}`;
                   navigator.clipboard.writeText(url);
                   setCopied(true);
                   setTimeout(() => setCopied(false), 2000);
