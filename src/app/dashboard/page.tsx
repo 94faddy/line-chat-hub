@@ -6,7 +6,7 @@ import {
   FiSearch, FiFilter, FiMoreVertical, FiSend, FiImage, 
   FiSmile, FiPaperclip, FiCheck, FiCheckCircle, FiX,
   FiTag, FiUser, FiMessageCircle, FiInbox, FiZap, FiPlus,
-  FiTrash2, FiEdit2, FiBell, FiDownload, FiExternalLink,
+  FiTrash2, FiEdit2, FiBell, FiBellOff, FiDownload, FiExternalLink,
   FiChevronDown
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
@@ -137,6 +137,54 @@ const getMediaUrl = (url: string | undefined): string | undefined => {
     return url.replace('/uploads/', '/api/media/');
   }
   return url;
+};
+
+// ============================================
+// Browser Notification Helper
+// ============================================
+const requestNotificationPermission = async (): Promise<boolean> => {
+  if (typeof window === 'undefined') return false;
+  
+  if (!('Notification' in window)) {
+    console.log('Browser ไม่รองรับ Notification');
+    return false;
+  }
+  
+  if (Notification.permission === 'granted') {
+    return true;
+  }
+  
+  if (Notification.permission !== 'denied') {
+    const permission = await Notification.requestPermission();
+    return permission === 'granted';
+  }
+  
+  return false;
+};
+
+const showBrowserNotification = (title: string, body: string, icon?: string) => {
+  if (typeof window === 'undefined') return;
+  
+  if (Notification.permission === 'granted') {
+    try {
+      const notification = new Notification(title, {
+        body,
+        icon: icon || '/favicon.ico',
+        badge: '/favicon.ico',
+        tag: 'new-message-' + Date.now(),
+        requireInteraction: false,
+      });
+      
+      notification.onclick = () => {
+        window.focus();
+        notification.close();
+      };
+      
+      setTimeout(() => notification.close(), 5000);
+    } catch (e) {
+      console.log('Notification error:', e);
+    }
+  }
 };
 
 // ฟังก์ชันแปลงเวลาเป็น Asia/Bangkok timezone แบบ relative
@@ -410,7 +458,7 @@ interface NewMessageBubbleProps {
 function NewMessageBubble({ message, senderName, onClick }: NewMessageBubbleProps) {
   const getPreview = () => {
     switch (message.message_type) {
-      case 'text': return message.content?.substring(0, 50) || '';
+      case 'text': return message.content?.substring(0, 100) || '';
       case 'image': return '📷 ส่งรูปภาพ';
       case 'video': return '🎬 ส่งวิดีโอ';
       case 'audio': return '🎵 ส่งเสียง';
@@ -425,21 +473,21 @@ function NewMessageBubble({ message, senderName, onClick }: NewMessageBubbleProp
     <div className="absolute bottom-20 left-1/2 -translate-x-1/2 z-30 animate-slide-up">
       <button
         onClick={onClick}
-        className="bg-white rounded-full shadow-lg border border-gray-200 
-                   px-4 py-2.5 flex items-center gap-3 
+        className="bg-white rounded-2xl shadow-lg border border-gray-200 
+                   px-5 py-3 flex items-center gap-4 
                    hover:shadow-xl transition-all duration-200
-                   max-w-[90%]"
+                   min-w-[320px] max-w-[500px]"
       >
-        <div className="w-8 h-8 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
-          <FiChevronDown className="w-5 h-5 text-white" />
+        <div className="w-10 h-10 bg-green-500 rounded-full flex items-center justify-center flex-shrink-0">
+          <FiChevronDown className="w-6 h-6 text-white" />
         </div>
-        <div className="text-left min-w-0">
-          <p className="text-xs text-gray-500 font-medium">{senderName}</p>
-          <p className="text-sm text-gray-800 truncate max-w-[180px]">
+        <div className="text-left min-w-0 flex-1">
+          <p className="text-xs text-gray-500 font-medium mb-0.5">{senderName}</p>
+          <p className="text-sm text-gray-800 truncate max-w-[350px]">
             {getPreview()}
           </p>
         </div>
-        <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full flex-shrink-0 animate-pulse">
+        <span className="bg-red-500 text-white text-xs px-2.5 py-1 rounded-full flex-shrink-0 animate-pulse font-medium">
           ใหม่
         </span>
       </button>
@@ -548,6 +596,7 @@ export default function InboxPage() {
   // Ref สำหรับเก็บ selectedConversation ล่าสุด
   const selectedConversationRef = useRef<Conversation | null>(null);
   const isUserScrollingRef = useRef(false);
+  const conversationsRef = useRef<Conversation[]>([]);
   
   useEffect(() => {
     selectedConversationRef.current = selectedConversation;
@@ -557,11 +606,135 @@ export default function InboxPage() {
     isUserScrollingRef.current = isUserScrolling;
   }, [isUserScrolling]);
 
+  useEffect(() => {
+    conversationsRef.current = conversations;
+  }, [conversations]);
+
+  // ============================================
+  // Notification Sound - With Enable Sound Banner
+  // ============================================
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const [soundEnabled, setSoundEnabled] = useState(false);
+  const [showSoundBanner, setShowSoundBanner] = useState(true);
+  const [showSoundConfirm, setShowSoundConfirm] = useState(false);
+
+  // Enable sound when user clicks the banner
+  const enableSound = useCallback(async () => {
+    try {
+      // สร้าง AudioContext
+      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+      
+      // Resume ถ้า suspended
+      if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
+      
+      // เล่นเสียงทดสอบ
+      const ctx = audioContextRef.current;
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      oscillator.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      oscillator.frequency.setValueAtTime(880, ctx.currentTime);
+      oscillator.type = 'sine';
+      gainNode.gain.setValueAtTime(0.3, ctx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+      oscillator.start(ctx.currentTime);
+      oscillator.stop(ctx.currentTime + 0.2);
+      
+      setSoundEnabled(true);
+      setShowSoundBanner(false);
+      setShowSoundConfirm(true);
+      console.log('🔊 Sound enabled!');
+      
+      // ซ่อน confirm หลัง 2 วินาที
+      setTimeout(() => setShowSoundConfirm(false), 2000);
+      
+      // Cleanup
+      setTimeout(() => {
+        oscillator.disconnect();
+        gainNode.disconnect();
+      }, 300);
+    } catch (e) {
+      console.log('Enable sound failed:', e);
+    }
+  }, []);
+
+  // Hide banner after 10 seconds
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowSoundBanner(false);
+    }, 15000);
+    return () => clearTimeout(timer);
+  }, []);
+
+  const playNotificationSound = useCallback(async () => {
+    if (!soundEnabled || !audioContextRef.current) {
+      console.log('🔇 Sound not enabled yet');
+      return;
+    }
+    
+    try {
+      const ctx = audioContextRef.current;
+      
+      // Resume ถ้า suspended
+      if (ctx.state === 'suspended') {
+        await ctx.resume();
+      }
+      
+      // เล่นเสียง notification (2 โทน)
+      const oscillator = ctx.createOscillator();
+      const gainNode = ctx.createGain();
+      
+      oscillator.connect(gainNode);
+      gainNode.connect(ctx.destination);
+      
+      // เสียง 2 โทน
+      oscillator.frequency.setValueAtTime(880, ctx.currentTime);
+      oscillator.frequency.setValueAtTime(1047, ctx.currentTime + 0.15);
+      oscillator.type = 'sine';
+      
+      gainNode.gain.setValueAtTime(0.4, ctx.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+      
+      oscillator.start(ctx.currentTime);
+      oscillator.stop(ctx.currentTime + 0.4);
+      
+      console.log('🔔 Notification sound played!');
+      
+      // Cleanup
+      setTimeout(() => {
+        oscillator.disconnect();
+        gainNode.disconnect();
+      }, 500);
+      
+    } catch (e) {
+      console.log('Sound error:', e);
+    }
+  }, [soundEnabled]);
+
   const handleSSEEvent = useCallback((event: any) => {
-    console.log('📥 SSE Event:', event.type, event.data);
+    console.log('📥 SSE Event:', event.type);
+    
+    // Skip if no data
+    if (!event.data) {
+      return;
+    }
     
     switch (event.type) {
       case 'new_message':
+        // ตรวจสอบว่ามี message หรือไม่
+        if (!event.data.message) {
+          console.log('⏭️ Skipping - no message in data');
+          return;
+        }
+        
+        console.log('📨 new_message:', {
+          conversation_id: event.data.conversation_id,
+          direction: event.data.message?.direction,
+          type: event.data.message?.message_type
+        });
+        
         const currentConv = selectedConversationRef.current;
         
         // เพิ่มข้อความใหม่ถ้าเป็น conversation ที่กำลังดูอยู่
@@ -587,14 +760,50 @@ export default function InboxPage() {
             fetch(`/api/messages/conversations/${currentConv.id}/read`, { method: 'POST' })
               .catch(err => console.error('Mark as read error:', err));
           }
-          // ข้อความขาออกไม่ต้อง auto scroll ที่นี่ (จัดการใน handleSendMessage แล้ว)
         }
         
-        // Play notification sound เฉพาะข้อความขาเข้าและไม่ได้ดู conversation นี้อยู่
+        // ✅ เล่นเสียงและแสดง Browser Notification สำหรับข้อความขาเข้า
         if (event.data.message.direction === 'incoming') {
           const isViewingThis = currentConv?.id === event.data.conversation_id;
+          
+          // เล่นเสียงเมื่อไม่ได้ดู conversation นี้
           if (!isViewingThis) {
+            console.log('🔊 Playing sound for new message...');
             playNotificationSound();
+          }
+          
+          // แสดง Browser Notification เมื่อหน้าเว็บไม่ได้ focus หรือไม่ได้ดู conversation นี้
+          const isPageVisible = typeof document !== 'undefined' && document.visibilityState === 'visible';
+          if (!isPageVisible || !isViewingThis) {
+            const convList = conversationsRef.current;
+            const conv = convList.find(c => c.id === event.data.conversation_id);
+            const senderName = conv?.line_user?.display_name || 'ข้อความใหม่';
+            
+            let messagePreview = '';
+            switch (event.data.message.message_type) {
+              case 'text':
+                messagePreview = event.data.message.content?.substring(0, 50) || '';
+                break;
+              case 'image':
+                messagePreview = '📷 ส่งรูปภาพ';
+                break;
+              case 'video':
+                messagePreview = '🎬 ส่งวิดีโอ';
+                break;
+              case 'audio':
+                messagePreview = '🎵 ส่งเสียง';
+                break;
+              case 'sticker':
+                messagePreview = '😀 ส่งสติกเกอร์';
+                break;
+              case 'location':
+                messagePreview = '📍 ส่งตำแหน่ง';
+                break;
+              default:
+                messagePreview = `[${event.data.message.message_type}]`;
+            }
+            
+            showBrowserNotification(senderName, messagePreview, conv?.line_user?.picture_url);
           }
         }
         break;
@@ -640,10 +849,21 @@ export default function InboxPage() {
             new Date(b.last_message_at || 0).getTime() - new Date(a.last_message_at || 0).getTime()
           );
         });
+        
+        // ✅ เล่นเสียงและแสดง notification สำหรับ conversation ใหม่
         playNotificationSound();
+        
+        if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+          const newConv = event.data;
+          showBrowserNotification(
+            '💬 แชทใหม่',
+            newConv.line_user?.display_name || 'มีผู้ติดต่อใหม่',
+            newConv.line_user?.picture_url
+          );
+        }
         break;
     }
-  }, [scrollToBottom]);
+  }, [scrollToBottom, playNotificationSound]);
 
   const connectSSE = useCallback(() => {
     if (eventSourceRef.current) {
@@ -684,63 +904,100 @@ export default function InboxPage() {
     };
   }, [connectSSE]);
 
-  // Audio context สำหรับ notification sound
-  const audioContextRef = useRef<AudioContext | null>(null);
-  
-  const initAudioContext = () => {
-    if (!audioContextRef.current) {
-      audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-    }
-    return audioContextRef.current;
-  };
+  // ============================================
+  // Polling Fallback - ดึงข้อมูลใหม่ทุก 5 วินาที
+  // ============================================
+  const lastCheckRef = useRef<Date>(new Date());
+  const previousUnreadCountRef = useRef<number>(0);
 
   useEffect(() => {
-    const handleUserGesture = () => {
-      initAudioContext();
-      document.removeEventListener('click', handleUserGesture);
-      document.removeEventListener('keydown', handleUserGesture);
-    };
-    
-    document.addEventListener('click', handleUserGesture);
-    document.addEventListener('keydown', handleUserGesture);
-    
-    return () => {
-      document.removeEventListener('click', handleUserGesture);
-      document.removeEventListener('keydown', handleUserGesture);
-    };
-  }, []);
-
-  const playNotificationSound = () => {
-    try {
-      const audioContext = audioContextRef.current || initAudioContext();
-      
-      if (audioContext.state === 'suspended') {
-        audioContext.resume();
+    const pollInterval = setInterval(async () => {
+      try {
+        // ดึง conversations ใหม่
+        const res = await fetch('/api/messages/conversations');
+        const data = await res.json();
+        
+        if (data.success && Array.isArray(data.data)) {
+          const newConversations = data.data as Conversation[];
+          
+          // นับ unread ทั้งหมด
+          const totalUnread = newConversations.reduce((sum, c) => sum + (c.unread_count || 0), 0);
+          
+          // ถ้ามี unread เพิ่มขึ้น = มีข้อความใหม่
+          if (totalUnread > previousUnreadCountRef.current) {
+            console.log(`📬 New messages detected! Unread: ${previousUnreadCountRef.current} → ${totalUnread}`);
+            
+            // หา conversation ที่มี unread เพิ่ม
+            const currentConv = selectedConversationRef.current;
+            const isViewingUnread = currentConv && newConversations.find(
+              c => c.id === currentConv.id && c.unread_count > 0
+            );
+            
+            // ถ้าไม่ได้ดู conversation ที่มีข้อความใหม่ → เล่นเสียง + notification
+            if (!isViewingUnread) {
+              playNotificationSound();
+              
+              // หา conversation ที่มีข้อความใหม่ล่าสุด
+              const newestConv = newConversations.find(c => c.unread_count > 0);
+              if (newestConv && document.visibilityState !== 'visible') {
+                showBrowserNotification(
+                  newestConv.line_user?.display_name || 'ข้อความใหม่',
+                  newestConv.last_message_preview || 'คุณมีข้อความใหม่',
+                  newestConv.line_user?.picture_url
+                );
+              }
+            }
+          }
+          
+          previousUnreadCountRef.current = totalUnread;
+          
+          // อัพเดท conversations list
+          setConversations(newConversations);
+          
+          // ถ้ากำลังดู conversation อยู่ ให้ดึงข้อความใหม่ด้วย
+          const currentConv = selectedConversationRef.current;
+          if (currentConv) {
+            const updatedConv = newConversations.find(c => c.id === currentConv.id);
+            if (updatedConv) {
+              // ดึงข้อความใหม่
+              const msgRes = await fetch(`/api/messages?conversation_id=${currentConv.id}`);
+              const msgData = await msgRes.json();
+              if (msgData.success) {
+                const newMessages = msgData.data as Message[];
+                const currentMessages = messages;
+                
+                // ถ้ามีข้อความใหม่
+                if (newMessages.length > currentMessages.length) {
+                  const latestMsg = newMessages[newMessages.length - 1];
+                  
+                  // ถ้าเป็นข้อความขาเข้าและไม่ได้ scroll อยู่ล่างสุด
+                  if (latestMsg.direction === 'incoming' && isUserScrollingRef.current) {
+                    setPendingNewMessage(latestMsg);
+                  } else if (latestMsg.direction === 'incoming') {
+                    setTimeout(() => scrollToBottom('smooth'), 50);
+                  }
+                  
+                  setMessages(newMessages);
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Polling error:', error);
       }
-      
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-      
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-      
-      oscillator.frequency.value = 800;
-      oscillator.type = 'sine';
-      
-      gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.3);
-      
-      oscillator.start(audioContext.currentTime);
-      oscillator.stop(audioContext.currentTime + 0.3);
-    } catch (e) {
-      console.log('Audio not supported');
-    }
-  };
+    }, 5000); // Poll ทุก 5 วินาที
+
+    return () => clearInterval(pollInterval);
+  }, [playNotificationSound, scrollToBottom, messages]);
 
   useEffect(() => {
     fetchChannels();
     fetchConversations();
     fetchTags();
+    
+    // ✅ ขอ permission สำหรับ Browser Notification
+    requestNotificationPermission();
   }, []);
 
   // ✅ เมื่อเปลี่ยน conversation → scroll ลงล่างสุด
@@ -1080,15 +1337,48 @@ export default function InboxPage() {
         <ImageModal url={imageModalUrl} onClose={() => setImageModalUrl(null)} />
       )}
       
+      {/* Sound Enable Banner */}
+      {showSoundBanner && !soundEnabled && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 animate-bounce">
+          <button
+            onClick={enableSound}
+            className="flex items-center gap-2 bg-green-500 hover:bg-green-600 text-white px-4 py-2 rounded-full shadow-lg transition-all"
+          >
+            <FiBell className="w-4 h-4" />
+            <span className="text-sm font-medium">คลิกเพื่อเปิดเสียงแจ้งเตือน</span>
+          </button>
+        </div>
+      )}
+      
+      {/* Sound Status Indicator - shows briefly then fades */}
+      {showSoundConfirm && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50">
+          <div className="flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs shadow">
+            <FiBell className="w-3 h-3" />
+            เสียงเปิดแล้ว ✓
+          </div>
+        </div>
+      )}
+      
       {/* Sidebar - Conversation List */}
       <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
         {/* Header */}
         <div className="p-4 border-b border-gray-100">
           <div className="flex items-center justify-between mb-3">
             <h1 className="text-lg font-bold text-gray-900">Inbox</h1>
-            <div className={`flex items-center gap-1 text-xs ${connected ? 'text-green-500' : 'text-red-500'}`}>
-              <FiBell className="w-3 h-3" />
-              {connected ? 'Live' : 'Offline'}
+            <div className="flex items-center gap-2">
+              {/* Sound indicator */}
+              <button
+                onClick={soundEnabled ? undefined : enableSound}
+                className={`flex items-center gap-1 text-xs ${soundEnabled ? 'text-green-500' : 'text-gray-400 hover:text-green-500 cursor-pointer'}`}
+                title={soundEnabled ? 'เสียงเปิดอยู่' : 'คลิกเพื่อเปิดเสียง'}
+              >
+                {soundEnabled ? <FiBell className="w-3 h-3" /> : <FiBellOff className="w-3 h-3" />}
+              </button>
+              <div className={`flex items-center gap-1 text-xs ${connected ? 'text-green-500' : 'text-red-500'}`}>
+                <span className={`w-2 h-2 rounded-full ${connected ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                {connected ? 'Live' : 'Offline'}
+              </div>
             </div>
           </div>
           

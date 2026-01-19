@@ -24,7 +24,11 @@ export function addClient(userId: number, controller: ReadableStreamDefaultContr
     clients.set(userId, new Set());
   }
   clients.get(userId)?.add(controller);
-  console.log(`🔌 SSE Client connected: userId=${userId}, total=${clients.get(userId)?.size}, allUsers=${clients.size}`);
+  
+  const allConnectedUsers = Array.from(clients.keys());
+  console.log(`🔌 SSE Client connected: userId=${userId}`);
+  console.log(`   - User ${userId} connections: ${clients.get(userId)?.size}`);
+  console.log(`   - All connected users: [${allConnectedUsers.join(', ')}]`);
 }
 
 // Remove client connection
@@ -33,13 +37,21 @@ export function removeClient(userId: number, controller: ReadableStreamDefaultCo
   if (clients.get(userId)?.size === 0) {
     clients.delete(userId);
   }
+  
+  const allConnectedUsers = Array.from(clients.keys());
   console.log(`🔌 SSE Client disconnected: userId=${userId}`);
+  console.log(`   - Remaining connected users: [${allConnectedUsers.join(', ')}]`);
 }
 
 // Send event to specific user
 export function sendEventToUser(userId: number, eventType: string, data: any) {
   const userClients = clients.get(userId);
-  console.log(`📤 Sending ${eventType} to userId=${userId}, clients=${userClients?.size || 0}`);
+  
+  // Debug: แสดง all connected users
+  const allConnectedUsers = Array.from(clients.keys());
+  console.log(`📤 Sending ${eventType} to userId=${userId}`);
+  console.log(`   - Target user clients: ${userClients?.size || 0}`);
+  console.log(`   - All connected users: [${allConnectedUsers.join(', ')}]`);
   
   if (userClients && userClients.size > 0) {
     const encoder = new TextEncoder();
@@ -52,13 +64,13 @@ export function sendEventToUser(userId: number, eventType: string, data: any) {
     userClients.forEach((controller) => {
       try {
         controller.enqueue(encoder.encode(`data: ${eventData}\n\n`));
+        console.log(`✅ Event sent successfully to userId=${userId}: ${eventType}`);
       } catch (error) {
-        console.error('Failed to send to client:', error);
+        console.error(`❌ Failed to send to userId=${userId}:`, error);
       }
     });
-    console.log(`✅ Event sent to userId=${userId}: ${eventType}`);
   } else {
-    console.log(`⚠️ No SSE clients for userId=${userId}`);
+    console.log(`⚠️ No SSE clients for userId=${userId}. Connected users: [${allConnectedUsers.join(', ')}]`);
   }
 }
 
@@ -104,7 +116,7 @@ export async function sendEventToChannelOwners(channelId: number, eventType: str
       });
     }
     
-    console.log(`📡 Channel ${channelId}: notifying ${userIdsToNotify.size} users (owner + ${userIdsToNotify.size - 1} admins)`);
+    console.log(`📡 Channel ${channelId}: notifying users [${Array.from(userIdsToNotify).join(', ')}]`);
     
     // ส่ง event ไปยังทุก user ที่มีสิทธิ์
     userIdsToNotify.forEach((userId) => {
