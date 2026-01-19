@@ -2,7 +2,27 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { verifyToken } from '@/lib/auth';
 
-// GET - ดึงรายการข้อความตอบกลับ
+// Helper: ดึง owner IDs ที่ user มีสิทธิ์เข้าถึง
+async function getAccessibleOwnerIds(userId: number): Promise<number[]> {
+  const ownerIds = [userId];
+  
+  const permissions = await query(
+    `SELECT DISTINCT owner_id FROM admin_permissions WHERE admin_id = ? AND status = 'active'`,
+    [userId]
+  );
+  
+  if (Array.isArray(permissions)) {
+    permissions.forEach((p: any) => {
+      if (p.owner_id && !ownerIds.includes(p.owner_id)) {
+        ownerIds.push(p.owner_id);
+      }
+    });
+  }
+  
+  return ownerIds;
+}
+
+// GET - ดึงรายการข้อความตอบกลับ (รวม owner + admin permissions)
 export async function GET(request: NextRequest) {
   try {
     const token = request.cookies.get('auth_token')?.value;
@@ -18,13 +38,17 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const channelId = searchParams.get('channel_id');
 
+    // ดึง owner IDs ที่มีสิทธิ์เข้าถึง
+    const ownerIds = await getAccessibleOwnerIds(payload.userId);
+    const placeholders = ownerIds.map(() => '?').join(',');
+
     let sql = `
       SELECT qr.*, lc.channel_name
       FROM quick_replies qr
       LEFT JOIN line_channels lc ON qr.channel_id = lc.id
-      WHERE qr.user_id = ? AND qr.is_active = 1
+      WHERE qr.user_id IN (${placeholders}) AND qr.is_active = 1
     `;
-    const params: any[] = [payload.userId];
+    const params: any[] = [...ownerIds];
 
     // ดึงทั้งที่เป็น global (channel_id = null) และของ channel ที่ระบุ
     if (channelId) {
@@ -43,7 +67,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - สร้างข้อความตอบกลับใหม่
+// POST - สร้างข้อความตอบกลับใหม่ (สร้างในชื่อตัวเอง)
 export async function POST(request: NextRequest) {
   try {
     const token = request.cookies.get('auth_token')?.value;
@@ -63,14 +87,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'กรุณากรอกชื่อและข้อความ' }, { status: 400 });
     }
 
-    // ถ้าระบุ channel_id ให้ตรวจสอบว่าเป็นของ user หรือไม่
+    // ถ้าระบุ channel_id ให้ตรวจสอบว่ามีสิทธิ์หรือไม่
     if (channel_id) {
+      const ownerIds = await getAccessibleOwnerIds(payload.userId);
+      const placeholders = ownerIds.map(() => '?').join(',');
+      
       const channels = await query(
-        'SELECT id FROM line_channels WHERE id = ? AND user_id = ?',
-        [channel_id, payload.userId]
+        `SELECT id FROM line_channels WHERE id = ? AND user_id IN (${placeholders})`,
+        [channel_id, ...ownerIds]
       );
       if (!Array.isArray(channels) || channels.length === 0) {
-        return NextResponse.json({ success: false, message: 'ไม่พบ Channel' }, { status: 404 });
+        return NextResponse.json({ success: false, message: 'ไม่พบ Channel หรือไม่มีสิทธิ์' }, { status: 404 });
       }
     }
 

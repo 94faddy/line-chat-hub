@@ -62,21 +62,55 @@ export function sendEventToUser(userId: number, eventType: string, data: any) {
   }
 }
 
-// Send event to all users who own a channel
+// Send event to all users who have access to a channel (owner + admins)
 export async function sendEventToChannelOwners(channelId: number, eventType: string, data: any) {
   try {
+    // ดึง owner ของ channel
     const channels = await query(
       'SELECT user_id FROM line_channels WHERE id = ?',
       [channelId]
     );
     
-    if (Array.isArray(channels) && channels.length > 0) {
-      const channel = channels[0] as any;
-      console.log(`📡 Channel ${channelId} owned by userId=${channel.user_id}`);
-      sendEventToUser(channel.user_id, eventType, data);
-    } else {
+    if (!Array.isArray(channels) || channels.length === 0) {
       console.log(`⚠️ Channel ${channelId} not found`);
+      return;
     }
+    
+    const channel = channels[0] as any;
+    const ownerId = channel.user_id;
+    
+    // เก็บ user IDs ที่ต้องส่ง notification
+    const userIdsToNotify = new Set<number>();
+    userIdsToNotify.add(ownerId);
+    
+    // ดึง admin IDs ที่มีสิทธิ์เข้าถึง channel นี้
+    // 1. Admin ที่ได้รับสิทธิ์เฉพาะ channel นี้
+    // 2. Admin ที่ได้รับสิทธิ์ทุก channel ของ owner (channel_id IS NULL)
+    const admins = await query(
+      `SELECT DISTINCT admin_id FROM admin_permissions 
+       WHERE status = 'active' 
+       AND (
+         channel_id = ?
+         OR (owner_id = ? AND channel_id IS NULL)
+       )`,
+      [channelId, ownerId]
+    );
+    
+    if (Array.isArray(admins)) {
+      admins.forEach((admin: any) => {
+        if (admin.admin_id && admin.admin_id !== ownerId) {
+          userIdsToNotify.add(admin.admin_id);
+        }
+      });
+    }
+    
+    console.log(`📡 Channel ${channelId}: notifying ${userIdsToNotify.size} users (owner + ${userIdsToNotify.size - 1} admins)`);
+    
+    // ส่ง event ไปยังทุก user ที่มีสิทธิ์
+    userIdsToNotify.forEach((userId) => {
+      sendEventToUser(userId, eventType, data);
+    });
+    
   } catch (error) {
     console.error('Error sending event to channel owners:', error);
   }
@@ -95,4 +129,10 @@ export async function notifyNewMessage(channelId: number, conversationId: number
 export async function notifyConversationUpdate(channelId: number, conversation: any) {
   console.log(`📨 notifyConversationUpdate: channel=${channelId}, conv=${conversation.id}`);
   await sendEventToChannelOwners(channelId, 'conversation_update', conversation);
+}
+
+// Notify new conversation
+export async function notifyNewConversation(channelId: number, conversation: any) {
+  console.log(`📨 notifyNewConversation: channel=${channelId}, conv=${conversation.id}`);
+  await sendEventToChannelOwners(channelId, 'new_conversation', conversation);
 }

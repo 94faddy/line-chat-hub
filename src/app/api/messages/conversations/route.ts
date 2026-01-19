@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { verifyToken } from '@/lib/auth';
 
-// GET - ดึงรายการการสนทนาทั้งหมด
+// GET - ดึงรายการการสนทนาทั้งหมด (รวม owner + admin permissions)
 export async function GET(request: NextRequest) {
   try {
     const token = request.cookies.get('auth_token')?.value;
@@ -20,6 +20,9 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status');
     const search = searchParams.get('search');
 
+    // ดึง channel IDs ที่ user มีสิทธิ์เข้าถึง (owner + admin)
+    // 1. Channels ที่ user เป็นเจ้าของ
+    // 2. Channels ที่ user ได้รับสิทธิ์ผ่าน admin_permissions
     let sql = `
       SELECT 
         c.id,
@@ -45,10 +48,20 @@ export async function GET(request: NextRequest) {
       FROM conversations c
       INNER JOIN line_channels ch ON c.channel_id = ch.id
       INNER JOIN line_users lu ON c.line_user_id = lu.id
-      WHERE ch.user_id = ?
+      WHERE (
+        ch.user_id = ?
+        OR ch.id IN (
+          SELECT ap.channel_id FROM admin_permissions ap 
+          WHERE ap.admin_id = ? AND ap.status = 'active' AND ap.channel_id IS NOT NULL
+        )
+        OR ch.user_id IN (
+          SELECT ap.owner_id FROM admin_permissions ap 
+          WHERE ap.admin_id = ? AND ap.status = 'active' AND ap.channel_id IS NULL
+        )
+      )
     `;
 
-    const params: any[] = [payload.userId];
+    const params: any[] = [payload.userId, payload.userId, payload.userId];
 
     if (channelId) {
       sql += ' AND c.channel_id = ?';

@@ -24,7 +24,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบ' }, { status: 400 });
     }
 
-    // ดึงข้อมูลการสนทนา
+    // ดึงข้อมูลการสนทนา (รองรับ owner + admin permissions)
     const conversations = await query(
       `SELECT 
         c.id, c.channel_id, c.line_user_id,
@@ -33,8 +33,18 @@ export async function POST(request: NextRequest) {
        FROM conversations c
        INNER JOIN line_channels ch ON c.channel_id = ch.id
        INNER JOIN line_users lu ON c.line_user_id = lu.id
-       WHERE c.id = ? AND ch.user_id = ?`,
-      [conversation_id, payload.userId]
+       WHERE c.id = ? AND (
+         ch.user_id = ?
+         OR ch.id IN (
+           SELECT ap.channel_id FROM admin_permissions ap 
+           WHERE ap.admin_id = ? AND ap.status = 'active' AND ap.channel_id IS NOT NULL
+         )
+         OR ch.user_id IN (
+           SELECT ap.owner_id FROM admin_permissions ap 
+           WHERE ap.admin_id = ? AND ap.status = 'active' AND ap.channel_id IS NULL
+         )
+       )`,
+      [conversation_id, payload.userId, payload.userId, payload.userId]
     );
 
     if (!Array.isArray(conversations) || conversations.length === 0) {
@@ -65,17 +75,16 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
 
-      // แปลง URL ให้ใช้ API media route แทน static path
-      // เพื่อ bypass ngrok browser warning
+      // สำหรับ ngrok หรือ URL ที่ใช้ /uploads/ ให้แปลงเป็น /api/media/
+      // เพื่อให้ LINE สามารถเข้าถึงรูปได้โดยไม่ต้องยืนยัน browser warning
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
       if (media_url.startsWith(baseUrl) && media_url.includes('/uploads/')) {
         // แปลง /uploads/2026/01/xxx.png -> /api/media/2026/01/xxx.png
         processedMediaUrl = media_url.replace('/uploads/', '/api/media/');
-        console.log('📸 [Send Image] Converted URL:', processedMediaUrl);
       }
 
       console.log('📸 [Send Image] Original URL:', media_url);
-      console.log('📸 [Send Image] Processed URL:', processedMediaUrl);
+      console.log('📸 [Send Image] Processed URL for LINE:', processedMediaUrl);
       console.log('📸 [Send Image] Target user:', conv.target_user_id);
       
       lineMessage = {
@@ -94,7 +103,7 @@ export async function POST(request: NextRequest) {
         processedMediaUrl = media_url.replace('/uploads/', '/api/media/');
       }
       
-      // สร้าง preview image URL (ใช้ thumbnail หรือ placeholder)
+      // สร้าง preview image URL (ใช้ placeholder)
       const previewUrl = processedMediaUrl.replace(/\.[^/.]+$/, '.jpg');
       
       lineMessage = {

@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { useSearchParams, useRouter } from 'next/navigation';
-import { FiCheck, FiX, FiUser, FiMessageCircle, FiClock } from 'react-icons/fi';
+import { useEffect, useState, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import Link from 'next/link';
+import { FiCheck, FiX, FiUser, FiLoader, FiAlertCircle } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 
 interface InviteData {
@@ -14,36 +15,43 @@ interface InviteData {
   expires_at: string;
 }
 
-export default function AcceptInvitePage() {
-  const searchParams = useSearchParams();
+function AcceptInviteContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const token = searchParams.get('token');
-
+  
   const [loading, setLoading] = useState(true);
   const [accepting, setAccepting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [invite, setInvite] = useState<InviteData | null>(null);
+  const [inviteData, setInviteData] = useState<InviteData | null>(null);
+  const [requireLogin, setRequireLogin] = useState(false);
 
   useEffect(() => {
     if (token) {
       fetchInviteData();
     } else {
-      setError('ไม่พบ Token');
+      setError('ไม่พบ Token ในลิงก์');
       setLoading(false);
     }
   }, [token]);
 
   const fetchInviteData = async () => {
+    if (!token) return;
+    
     try {
+      console.log('Fetching invite data for token:', token);
       const res = await fetch(`/api/team/accept/${token}`);
       const data = await res.json();
 
+      console.log('Response:', data);
+
       if (data.success) {
-        setInvite(data.data);
+        setInviteData(data.data);
       } else {
-        setError(data.message || 'ลิงก์เชิญไม่ถูกต้อง');
+        setError(data.message || 'ลิงก์ไม่ถูกต้อง');
       }
-    } catch (err) {
+    } catch (error: any) {
+      console.error('Error fetching invite:', error);
       setError('ไม่สามารถโหลดข้อมูลได้');
     } finally {
       setLoading(false);
@@ -51,40 +59,29 @@ export default function AcceptInvitePage() {
   };
 
   const handleAccept = async () => {
+    if (!token) return;
+    
     setAccepting(true);
-
+    setRequireLogin(false);
+    
     try {
       const res = await fetch(`/api/team/accept/${token}`, {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
       });
 
       const data = await res.json();
 
       if (data.success) {
-        Swal.fire({
+        await Swal.fire({
           icon: 'success',
           title: 'รับคำเชิญสำเร็จ!',
           text: 'คุณสามารถเข้าใช้งานระบบได้แล้ว',
-          confirmButtonText: 'ไปที่ Dashboard',
-        }).then(() => {
-          router.push('/dashboard');
+          confirmButtonColor: '#06C755',
         });
+        router.push('/dashboard');
       } else if (data.require_login) {
-        // ต้อง login ก่อน
-        Swal.fire({
-          icon: 'info',
-          title: 'กรุณาเข้าสู่ระบบ',
-          text: 'คุณต้องเข้าสู่ระบบก่อนรับคำเชิญ',
-          showCancelButton: true,
-          confirmButtonText: 'เข้าสู่ระบบ',
-          cancelButtonText: 'สมัครสมาชิก',
-        }).then((result) => {
-          if (result.isConfirmed) {
-            router.push(`/auth/login?redirect=/auth/accept-invite?token=${token}`);
-          } else if (result.dismiss === Swal.DismissReason.cancel) {
-            router.push(`/auth/register?redirect=/auth/accept-invite?token=${token}`);
-          }
-        });
+        setRequireLogin(true);
       } else {
         Swal.fire({
           icon: 'error',
@@ -92,7 +89,7 @@ export default function AcceptInvitePage() {
           text: data.message,
         });
       }
-    } catch (err) {
+    } catch (error) {
       Swal.fire({
         icon: 'error',
         title: 'เกิดข้อผิดพลาด',
@@ -103,138 +100,181 @@ export default function AcceptInvitePage() {
     }
   };
 
-  const formatPermissions = (permissions: any) => {
-    if (!permissions) return [];
-    const perms = typeof permissions === 'string' ? JSON.parse(permissions) : permissions;
-    const labels: string[] = [];
-    if (perms.can_reply) labels.push('ตอบแชท');
-    if (perms.can_view_all) labels.push('ดูแชททั้งหมด');
-    if (perms.can_manage_tags) labels.push('จัดการ Tags');
-    if (perms.can_broadcast) labels.push('ส่ง Broadcast');
-    return labels;
-  };
-
-  const formatExpiry = (dateStr: string) => {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('th-TH', {
-      year: 'numeric',
-      month: 'long',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
+  // Loading state
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
-        <div className="text-center">
-          <div className="spinner w-12 h-12 border-4 mx-auto mb-4"></div>
-          <p className="text-gray-600">กำลังโหลด...</p>
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
+          <FiLoader className="w-12 h-12 text-green-500 mx-auto mb-4 animate-spin" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">กำลังโหลด...</h2>
+          <p className="text-gray-500">กรุณารอสักครู่</p>
         </div>
       </div>
     );
   }
 
+  // Error state
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
-        <div className="bg-white rounded-xl shadow-lg p-8 max-w-md w-full text-center">
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
           <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <FiX className="w-8 h-8 text-red-500" />
+            <FiAlertCircle className="w-8 h-8 text-red-500" />
           </div>
-          <h1 className="text-xl font-bold text-gray-900 mb-2">ลิงก์ไม่ถูกต้อง</h1>
-          <p className="text-gray-600 mb-6">{error}</p>
-          <button
-            onClick={() => router.push('/auth/login')}
-            className="btn btn-primary w-full"
-          >
-            กลับไปหน้า Login
-          </button>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">ลิงก์ไม่ถูกต้อง</h2>
+          <p className="text-gray-500 mb-6">{error}</p>
+          <Link href="/auth/login" className="btn btn-primary w-full justify-center">
+            กลับหน้าล็อกอิน
+          </Link>
         </div>
       </div>
     );
   }
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100 p-4">
-      <div className="bg-white rounded-xl shadow-lg p-8 max-w-md w-full">
-        <div className="text-center mb-6">
-          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <FiMessageCircle className="w-8 h-8 text-green-500" />
+  // Require login state
+  if (requireLogin) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
+          <div className="w-16 h-16 bg-yellow-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FiUser className="w-8 h-8 text-yellow-600" />
           </div>
-          <h1 className="text-xl font-bold text-gray-900 mb-2">คำเชิญเข้าร่วมทีม</h1>
-          <p className="text-gray-600">คุณได้รับเชิญให้เข้าร่วมทีม</p>
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">กรุณาเข้าสู่ระบบ</h2>
+          <p className="text-gray-500 mb-6">คุณต้องเข้าสู่ระบบก่อนรับคำเชิญ</p>
+          
+          {inviteData && (
+            <div className="bg-gray-50 rounded-lg p-4 mb-6 text-left">
+              <p className="text-sm text-gray-600">
+                <strong>{inviteData.owner_name}</strong> เชิญคุณเป็นแอดมิน
+              </p>
+              <p className="text-sm text-gray-500">Channel: {inviteData.channel_name}</p>
+            </div>
+          )}
+          
+          <div className="space-y-3">
+            <Link 
+              href={`/auth/login?redirect=/auth/accept-invite?token=${token}`} 
+              className="btn btn-primary w-full justify-center"
+            >
+              เข้าสู่ระบบ
+            </Link>
+            <Link 
+              href={`/auth/register?redirect=/auth/accept-invite?token=${token}`} 
+              className="btn btn-secondary w-full justify-center"
+            >
+              สมัครสมาชิกใหม่
+            </Link>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Main invite view
+  return (
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full">
+        {/* Header */}
+        <div className="text-center mb-8">
+          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FiUser className="w-10 h-10 text-green-600" />
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900 mb-2">คำเชิญเข้าร่วมทีม</h1>
+          <p className="text-gray-500">คุณได้รับคำเชิญให้เป็นแอดมิน</p>
         </div>
 
-        {invite && (
-          <div className="space-y-4 mb-6">
-            {/* เจ้าของ */}
-            <div className="bg-gray-50 rounded-lg p-4">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
-                  <FiUser className="w-5 h-5 text-gray-500" />
+        {/* Invite Info */}
+        {inviteData && (
+          <div className="bg-gray-50 rounded-xl p-6 mb-6">
+            <div className="space-y-4">
+              <div>
+                <p className="text-sm text-gray-500">เชิญโดย</p>
+                <p className="font-medium text-gray-900">{inviteData.owner_name}</p>
+                <p className="text-sm text-gray-500">{inviteData.owner_email}</p>
+              </div>
+              
+              <div>
+                <p className="text-sm text-gray-500">Channel</p>
+                <p className="font-medium text-gray-900">{inviteData.channel_name}</p>
+              </div>
+
+              <div>
+                <p className="text-sm text-gray-500 mb-2">สิทธิ์ที่ได้รับ</p>
+                <div className="flex flex-wrap gap-2">
+                  {inviteData.permissions?.can_reply && (
+                    <span className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">ตอบแชท</span>
+                  )}
+                  {inviteData.permissions?.can_view_all && (
+                    <span className="px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-sm">ดูทั้งหมด</span>
+                  )}
+                  {inviteData.permissions?.can_manage_tags && (
+                    <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">จัดการ Tags</span>
+                  )}
+                  {inviteData.permissions?.can_broadcast && (
+                    <span className="px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-sm">Broadcast</span>
+                  )}
                 </div>
+              </div>
+
+              {inviteData.expires_at && (
                 <div>
-                  <p className="font-medium text-gray-900">{invite.owner_name || 'ผู้ใช้'}</p>
-                  <p className="text-sm text-gray-500">{invite.owner_email}</p>
+                  <p className="text-sm text-gray-500">หมดอายุ</p>
+                  <p className="text-sm text-gray-700">
+                    {new Date(inviteData.expires_at).toLocaleDateString('th-TH', {
+                      year: 'numeric',
+                      month: 'long',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}
+                  </p>
                 </div>
-              </div>
+              )}
             </div>
-
-            {/* Channel */}
-            <div>
-              <label className="text-sm font-medium text-gray-500">Channel</label>
-              <p className="text-gray-900">{invite.channel_name}</p>
-            </div>
-
-            {/* สิทธิ์ */}
-            <div>
-              <label className="text-sm font-medium text-gray-500">สิทธิ์ที่จะได้รับ</label>
-              <div className="flex flex-wrap gap-2 mt-1">
-                {formatPermissions(invite.permissions).map((perm, i) => (
-                  <span key={i} className="tag bg-blue-100 text-blue-700">{perm}</span>
-                ))}
-              </div>
-            </div>
-
-            {/* วันหมดอายุ */}
-            {invite.expires_at && (
-              <div className="flex items-center gap-2 text-sm text-orange-600">
-                <FiClock className="w-4 h-4" />
-                <span>หมดอายุ: {formatExpiry(invite.expires_at)}</span>
-              </div>
-            )}
           </div>
         )}
 
-        <div className="flex gap-3">
-          <button
-            onClick={() => router.push('/')}
-            className="btn btn-secondary flex-1"
-          >
-            ยกเลิก
-          </button>
+        {/* Actions */}
+        <div className="space-y-3">
           <button
             onClick={handleAccept}
             disabled={accepting}
-            className="btn btn-primary flex-1"
+            className="btn btn-primary w-full justify-center py-3"
           >
             {accepting ? (
               <span className="flex items-center gap-2">
-                <div className="spinner w-4 h-4 border-white border-t-transparent"></div>
-                กำลังรับ...
+                <FiLoader className="w-5 h-5 animate-spin" />
+                กำลังดำเนินการ...
               </span>
             ) : (
               <span className="flex items-center gap-2">
                 <FiCheck className="w-5 h-5" />
-                รับคำเชิญ
+                ยอมรับคำเชิญ
               </span>
             )}
           </button>
+          
+          <Link href="/" className="btn btn-secondary w-full justify-center py-3">
+            <FiX className="w-5 h-5 mr-2" />
+            ปฏิเสธ
+          </Link>
         </div>
       </div>
     </div>
+  );
+}
+
+export default function AcceptInvitePage() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl shadow-xl p-8 max-w-md w-full text-center">
+          <FiLoader className="w-12 h-12 text-green-500 mx-auto mb-4 animate-spin" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">กำลังโหลด...</h2>
+        </div>
+      </div>
+    }>
+      <AcceptInviteContent />
+    </Suspense>
   );
 }

@@ -3,7 +3,37 @@ import { query } from '@/lib/db';
 import { verifyToken } from '@/lib/auth';
 
 interface RouteParams {
-  params: { id: string };
+  params: Promise<{ id: string }>;
+}
+
+// Helper: ตรวจสอบสิทธิ์เข้าถึง channel
+async function checkChannelAccess(channelId: string, userId: number): Promise<{ hasAccess: boolean; isOwner: boolean }> {
+  // เช็คว่าเป็น owner
+  const ownerCheck = await query(
+    'SELECT id FROM line_channels WHERE id = ? AND user_id = ?',
+    [channelId, userId]
+  );
+  
+  if (Array.isArray(ownerCheck) && ownerCheck.length > 0) {
+    return { hasAccess: true, isOwner: true };
+  }
+  
+  // เช็คว่าเป็น admin
+  const adminCheck = await query(
+    `SELECT ap.id FROM admin_permissions ap
+     INNER JOIN line_channels lc ON (
+       (ap.channel_id = lc.id AND ap.channel_id IS NOT NULL)
+       OR (ap.owner_id = lc.user_id AND ap.channel_id IS NULL)
+     )
+     WHERE lc.id = ? AND ap.admin_id = ? AND ap.status = 'active'`,
+    [channelId, userId]
+  );
+  
+  if (Array.isArray(adminCheck) && adminCheck.length > 0) {
+    return { hasAccess: true, isOwner: false };
+  }
+  
+  return { hasAccess: false, isOwner: false };
 }
 
 // GET - ดึงข้อมูล channel เดียว
@@ -19,11 +49,17 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
-    const channelId = params.id;
+    const { id: channelId } = await params;
+
+    // ตรวจสอบสิทธิ์
+    const { hasAccess } = await checkChannelAccess(channelId, payload.userId);
+    if (!hasAccess) {
+      return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึง Channel นี้' }, { status: 403 });
+    }
 
     const channels = await query(
-      `SELECT * FROM line_channels WHERE id = ? AND user_id = ?`,
-      [channelId, payload.userId]
+      `SELECT * FROM line_channels WHERE id = ?`,
+      [channelId]
     );
 
     if (!Array.isArray(channels) || channels.length === 0) {
@@ -37,7 +73,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// PUT - อัพเดท channel
+// PUT - อัพเดท channel (เฉพาะ owner)
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
     const token = request.cookies.get('auth_token')?.value;
@@ -50,18 +86,14 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
-    const channelId = params.id;
+    const { id: channelId } = await params;
     const body = await request.json();
     const { channel_name, channel_access_token, channel_secret } = body;
 
-    // ตรวจสอบว่าเป็นเจ้าของ channel
-    const existing = await query(
-      `SELECT id FROM line_channels WHERE id = ? AND user_id = ?`,
-      [channelId, payload.userId]
-    );
-
-    if (!Array.isArray(existing) || existing.length === 0) {
-      return NextResponse.json({ success: false, message: 'ไม่พบ Channel' }, { status: 404 });
+    // ตรวจสอบว่าเป็นเจ้าของ channel (admin แก้ไขไม่ได้)
+    const { isOwner } = await checkChannelAccess(channelId, payload.userId);
+    if (!isOwner) {
+      return NextResponse.json({ success: false, message: 'เฉพาะเจ้าของเท่านั้นที่แก้ไขได้' }, { status: 403 });
     }
 
     // อัพเดท channel
@@ -79,7 +111,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// DELETE - ลบ channel
+// DELETE - ลบ channel (เฉพาะ owner)
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     const token = request.cookies.get('auth_token')?.value;
@@ -92,7 +124,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
-    const channelId = params.id;
+    const { id: channelId } = await params;
 
     // ตรวจสอบว่าเป็นเจ้าของ channel
     const existing = await query(
@@ -106,35 +138,21 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     const channelName = (existing[0] as any).channel_name;
 
-    // ลบข้อมูลที่เกี่ยวข้องทั้งหมด (ลบตามลำดับ foreign key)
+    // ลบข้อมูลที่เกี่ยวข้องทั้งหมด
     try {
-      // 1. ลบ messages ของ channel นี้
       await query(`DELETE FROM messages WHERE channel_id = ?`, [channelId]);
-
-      // 2. ลบ conversations ของ channel นี้
       await query(`DELETE FROM conversations WHERE channel_id = ?`, [channelId]);
-
-      // 3. ลบ line_users ของ channel นี้
       await query(`DELETE FROM line_users WHERE channel_id = ?`, [channelId]);
-
-      // 4. ลบ admin_permissions ของ channel นี้
       await query(`DELETE FROM admin_permissions WHERE channel_id = ?`, [channelId]);
-
-      // 5. ลบ rich_menus ของ channel นี้ (ถ้ามี)
+      
       try {
         await query(`DELETE FROM rich_menus WHERE channel_id = ?`, [channelId]);
-      } catch (e) {
-        // ไม่เป็นไร ถ้าไม่มีตาราง rich_menus
-      }
-
-      // 6. ลบ broadcast_logs ของ channel นี้ (ถ้ามี)
+      } catch (e) {}
+      
       try {
         await query(`DELETE FROM broadcast_logs WHERE channel_id = ?`, [channelId]);
-      } catch (e) {
-        // ไม่เป็นไร ถ้าไม่มีตาราง broadcast_logs
-      }
+      } catch (e) {}
 
-      // 7. ลบ channel
       await query(
         `DELETE FROM line_channels WHERE id = ? AND user_id = ?`,
         [channelId, payload.userId]

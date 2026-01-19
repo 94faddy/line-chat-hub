@@ -3,7 +3,7 @@ import { query } from '@/lib/db';
 import { verifyToken } from '@/lib/auth';
 import { getChannelInfo } from '@/lib/line';
 
-// GET - ดึงรายการ Channels ทั้งหมด
+// GET - ดึงรายการ Channels ทั้งหมด (รวม owner + admin permissions)
 export async function GET(request: NextRequest) {
   try {
     const token = request.cookies.get('auth_token')?.value;
@@ -16,12 +16,28 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
+    // ดึง channels ที่ user เป็นเจ้าของ + channels ที่ได้รับสิทธิ์ผ่าน admin_permissions
     const channels = await query(
-      `SELECT id, channel_name, channel_id, basic_id, picture_url, status, created_at 
-       FROM line_channels 
-       WHERE user_id = ? 
+      `SELECT DISTINCT 
+         lc.id, lc.channel_name, lc.channel_id, lc.basic_id, lc.picture_url, lc.status, lc.created_at,
+         CASE WHEN lc.user_id = ? THEN 1 ELSE 0 END as is_owner
+       FROM line_channels lc
+       WHERE lc.user_id = ?
+       
+       UNION
+       
+       SELECT DISTINCT 
+         lc.id, lc.channel_name, lc.channel_id, lc.basic_id, lc.picture_url, lc.status, lc.created_at,
+         0 as is_owner
+       FROM line_channels lc
+       INNER JOIN admin_permissions ap ON (
+         (ap.channel_id = lc.id AND ap.channel_id IS NOT NULL)
+         OR (ap.owner_id = lc.user_id AND ap.channel_id IS NULL)
+       )
+       WHERE ap.admin_id = ? AND ap.status = 'active'
+       
        ORDER BY created_at DESC`,
-      [payload.userId]
+      [payload.userId, payload.userId, payload.userId]
     );
 
     return NextResponse.json({ success: true, data: channels });
@@ -31,7 +47,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - เพิ่ม Channel ใหม่
+// POST - เพิ่ม Channel ใหม่ (เฉพาะ owner เท่านั้น)
 export async function POST(request: NextRequest) {
   try {
     const token = request.cookies.get('auth_token')?.value;

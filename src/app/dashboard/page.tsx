@@ -6,7 +6,7 @@ import {
   FiSearch, FiFilter, FiMoreVertical, FiSend, FiImage, 
   FiSmile, FiPaperclip, FiCheck, FiCheckCircle, FiX,
   FiTag, FiUser, FiMessageCircle, FiInbox, FiZap, FiPlus,
-  FiTrash2, FiEdit2, FiBell
+  FiTrash2, FiEdit2, FiBell, FiDownload, FiExternalLink
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 import { FlexMessageRenderer, LinkifyText } from '@/components/FlexMessageRenderer';
@@ -129,6 +129,71 @@ function formatMessageTime(dateString: string): string {
   }
 }
 
+// Image Modal Component
+function ImageModal({ url, onClose }: { url: string; onClose: () => void }) {
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', handleEsc);
+    return () => document.removeEventListener('keydown', handleEsc);
+  }, [onClose]);
+
+  return (
+    <div 
+      className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      {/* Close button */}
+      <button 
+        onClick={onClose}
+        className="absolute top-4 right-4 p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+      >
+        <FiX className="w-6 h-6 text-white" />
+      </button>
+      
+      {/* Action buttons */}
+      <div className="absolute top-4 right-16 flex gap-2">
+        <a
+          href={url}
+          download
+          onClick={(e) => e.stopPropagation()}
+          className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+          title="ดาวน์โหลด"
+        >
+          <FiDownload className="w-5 h-5 text-white" />
+        </a>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
+          className="p-2 bg-white/10 hover:bg-white/20 rounded-full transition-colors"
+          title="เปิดในแท็บใหม่"
+        >
+          <FiExternalLink className="w-5 h-5 text-white" />
+        </a>
+      </div>
+      
+      {/* Image container - 50% of screen */}
+      <div 
+        className="relative"
+        onClick={(e) => e.stopPropagation()}
+        style={{ 
+          maxWidth: '50vw', 
+          maxHeight: '80vh'
+        }}
+      >
+        <img 
+          src={url} 
+          alt="Preview" 
+          className="max-w-full max-h-[80vh] object-contain rounded-lg shadow-2xl"
+        />
+      </div>
+    </div>
+  );
+}
+
 export default function InboxPage() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -157,6 +222,9 @@ export default function InboxPage() {
   // SSE connection
   const eventSourceRef = useRef<EventSource | null>(null);
   const [connected, setConnected] = useState(false);
+  
+  // Image Modal state
+  const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
 
   // Helper function สำหรับสร้าง preview
   const getMessagePreview = (message: any): string => {
@@ -643,6 +711,11 @@ export default function InboxPage() {
 
   return (
     <div className="flex h-[calc(100vh-4rem)]">
+      {/* Image Modal */}
+      {imageModalUrl && (
+        <ImageModal url={imageModalUrl} onClose={() => setImageModalUrl(null)} />
+      )}
+      
       {/* Sidebar - Conversation List */}
       <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
         {/* Header */}
@@ -886,9 +959,9 @@ export default function InboxPage() {
                       <img 
                         src={msg.media_url} 
                         alt="Image" 
-                        className="max-w-full rounded-lg cursor-pointer"
+                        className="max-w-full rounded-lg cursor-pointer hover:opacity-90 transition-opacity"
                         style={{ maxWidth: '250px' }}
-                        onClick={() => window.open(msg.media_url, '_blank')}
+                        onClick={() => setImageModalUrl(msg.media_url!)}
                         onError={(e) => {
                           // ถ้าโหลดรูปไม่ได้ ซ่อนรูป
                           const target = e.target as HTMLImageElement;
