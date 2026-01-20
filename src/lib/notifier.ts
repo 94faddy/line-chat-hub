@@ -1,12 +1,13 @@
-import { query } from './db';
+import { connectDB } from './mongodb';
+import { LineChannel, AdminPermission } from '@/models';
 
 // ใช้ global variable เพื่อไม่ให้สร้างใหม่ทุกครั้งใน Next.js dev mode
 declare global {
-  var sseClients: Map<number, Set<ReadableStreamDefaultController>> | undefined;
+  var sseClients: Map<string, Set<ReadableStreamDefaultController>> | undefined;
 }
 
-// Store active SSE connections
-const clients = global.sseClients || new Map<number, Set<ReadableStreamDefaultController>>();
+// Store active SSE connections (key = userId as string)
+const clients = global.sseClients || new Map<string, Set<ReadableStreamDefaultController>>();
 
 // เก็บไว้ใน global
 if (process.env.NODE_ENV !== 'production') {
@@ -14,12 +15,12 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 // Get the clients map
-export function getClients(): Map<number, Set<ReadableStreamDefaultController>> {
+export function getClients(): Map<string, Set<ReadableStreamDefaultController>> {
   return clients;
 }
 
 // Add client connection
-export function addClient(userId: number, controller: ReadableStreamDefaultController) {
+export function addClient(userId: string, controller: ReadableStreamDefaultController) {
   if (!clients.has(userId)) {
     clients.set(userId, new Set());
   }
@@ -32,7 +33,7 @@ export function addClient(userId: number, controller: ReadableStreamDefaultContr
 }
 
 // Remove client connection
-export function removeClient(userId: number, controller: ReadableStreamDefaultController) {
+export function removeClient(userId: string, controller: ReadableStreamDefaultController) {
   clients.get(userId)?.delete(controller);
   if (clients.get(userId)?.size === 0) {
     clients.delete(userId);
@@ -44,10 +45,9 @@ export function removeClient(userId: number, controller: ReadableStreamDefaultCo
 }
 
 // Send event to specific user
-export function sendEventToUser(userId: number, eventType: string, data: any) {
+export function sendEventToUser(userId: string, eventType: string, data: any) {
   const userClients = clients.get(userId);
   
-  // Debug: แสดง all connected users
   const allConnectedUsers = Array.from(clients.keys());
   console.log(`📤 Sending ${eventType} to userId=${userId}`);
   console.log(`   - Target user clients: ${userClients?.size || 0}`);
@@ -75,46 +75,38 @@ export function sendEventToUser(userId: number, eventType: string, data: any) {
 }
 
 // Send event to all users who have access to a channel (owner + admins)
-export async function sendEventToChannelOwners(channelId: number, eventType: string, data: any) {
+export async function sendEventToChannelOwners(channelId: string, eventType: string, data: any) {
   try {
-    // ดึง owner ของ channel
-    const channels = await query(
-      'SELECT user_id FROM line_channels WHERE id = ?',
-      [channelId]
-    );
+    await connectDB();
     
-    if (!Array.isArray(channels) || channels.length === 0) {
+    // ดึง channel และ owner
+    const channel = await LineChannel.findById(channelId).select('user_id').lean();
+    
+    if (!channel) {
       console.log(`⚠️ Channel ${channelId} not found`);
       return;
     }
     
-    const channel = channels[0] as any;
-    const ownerId = channel.user_id;
+    const ownerId = channel.user_id.toString();
     
     // เก็บ user IDs ที่ต้องส่ง notification
-    const userIdsToNotify = new Set<number>();
+    const userIdsToNotify = new Set<string>();
     userIdsToNotify.add(ownerId);
     
     // ดึง admin IDs ที่มีสิทธิ์เข้าถึง channel นี้
-    // 1. Admin ที่ได้รับสิทธิ์เฉพาะ channel นี้
-    // 2. Admin ที่ได้รับสิทธิ์ทุก channel ของ owner (channel_id IS NULL)
-    const admins = await query(
-      `SELECT DISTINCT admin_id FROM admin_permissions 
-       WHERE status = 'active' 
-       AND (
-         channel_id = ?
-         OR (owner_id = ? AND channel_id IS NULL)
-       )`,
-      [channelId, ownerId]
-    );
+    const admins = await AdminPermission.find({
+      status: 'active',
+      $or: [
+        { channel_id: channelId },
+        { owner_id: channel.user_id, channel_id: null },
+      ],
+    }).select('admin_id').lean();
     
-    if (Array.isArray(admins)) {
-      admins.forEach((admin: any) => {
-        if (admin.admin_id && admin.admin_id !== ownerId) {
-          userIdsToNotify.add(admin.admin_id);
-        }
-      });
-    }
+    admins.forEach((admin: any) => {
+      if (admin.admin_id) {
+        userIdsToNotify.add(admin.admin_id.toString());
+      }
+    });
     
     console.log(`📡 Channel ${channelId}: notifying users [${Array.from(userIdsToNotify).join(', ')}]`);
     
@@ -129,7 +121,7 @@ export async function sendEventToChannelOwners(channelId: number, eventType: str
 }
 
 // Notify new message
-export async function notifyNewMessage(channelId: number, conversationId: number, message: any) {
+export async function notifyNewMessage(channelId: string, conversationId: string, message: any) {
   console.log(`📨 notifyNewMessage: channel=${channelId}, conv=${conversationId}`);
   await sendEventToChannelOwners(channelId, 'new_message', {
     conversation_id: conversationId,
@@ -138,13 +130,13 @@ export async function notifyNewMessage(channelId: number, conversationId: number
 }
 
 // Notify conversation update
-export async function notifyConversationUpdate(channelId: number, conversation: any) {
-  console.log(`📨 notifyConversationUpdate: channel=${channelId}, conv=${conversation.id}`);
+export async function notifyConversationUpdate(channelId: string, conversation: any) {
+  console.log(`📨 notifyConversationUpdate: channel=${channelId}, conv=${conversation.id || conversation._id}`);
   await sendEventToChannelOwners(channelId, 'conversation_update', conversation);
 }
 
 // Notify new conversation
-export async function notifyNewConversation(channelId: number, conversation: any) {
-  console.log(`📨 notifyNewConversation: channel=${channelId}, conv=${conversation.id}`);
+export async function notifyNewConversation(channelId: string, conversation: any) {
+  console.log(`📨 notifyNewConversation: channel=${channelId}, conv=${conversation.id || conversation._id}`);
   await sendEventToChannelOwners(channelId, 'new_conversation', conversation);
 }

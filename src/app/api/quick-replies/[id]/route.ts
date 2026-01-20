@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { connectDB } from '@/lib/mongodb';
+import { QuickReply, AdminPermission } from '@/models';
 import { verifyToken } from '@/lib/auth';
 
 interface RouteParams {
@@ -7,47 +8,47 @@ interface RouteParams {
 }
 
 // Helper: ดึง owner IDs ที่ user มีสิทธิ์เข้าถึง
-async function getAccessibleOwnerIds(userId: number): Promise<number[]> {
+async function getAccessibleOwnerIds(userId: string): Promise<string[]> {
   const ownerIds = [userId];
   
-  const permissions = await query(
-    `SELECT DISTINCT owner_id FROM admin_permissions WHERE admin_id = ? AND status = 'active'`,
-    [userId]
-  );
+  const permissions = await AdminPermission.find({
+    admin_id: userId,
+    status: 'active',
+  }).select('owner_id').lean();
   
-  if (Array.isArray(permissions)) {
-    permissions.forEach((p: any) => {
-      if (p.owner_id && !ownerIds.includes(p.owner_id)) {
-        ownerIds.push(p.owner_id);
+  permissions.forEach((p: any) => {
+    if (p.owner_id) {
+      const ownerId = p.owner_id.toString();
+      if (!ownerIds.includes(ownerId)) {
+        ownerIds.push(ownerId);
       }
-    });
-  }
+    }
+  });
   
   return ownerIds;
 }
 
 // Helper: ตรวจสอบสิทธิ์เข้าถึง quick reply
-async function checkQuickReplyAccess(replyId: string, userId: number): Promise<{ hasAccess: boolean; isOwner: boolean }> {
+async function checkQuickReplyAccess(replyId: string, userId: string): Promise<{ hasAccess: boolean; isOwner: boolean }> {
   // เช็คว่าเป็น owner
-  const ownerCheck = await query(
-    'SELECT id FROM quick_replies WHERE id = ? AND user_id = ?',
-    [replyId, userId]
-  );
+  const reply = await QuickReply.findOne({
+    _id: replyId,
+    user_id: userId,
+  });
   
-  if (Array.isArray(ownerCheck) && ownerCheck.length > 0) {
+  if (reply) {
     return { hasAccess: true, isOwner: true };
   }
   
   // เช็คว่าเป็น admin
   const ownerIds = await getAccessibleOwnerIds(userId);
-  const placeholders = ownerIds.map(() => '?').join(',');
   
-  const adminCheck = await query(
-    `SELECT id FROM quick_replies WHERE id = ? AND user_id IN (${placeholders})`,
-    [replyId, ...ownerIds]
-  );
+  const adminReply = await QuickReply.findOne({
+    _id: replyId,
+    user_id: { $in: ownerIds },
+  });
   
-  if (Array.isArray(adminCheck) && adminCheck.length > 0) {
+  if (adminReply) {
     return { hasAccess: true, isOwner: false };
   }
   
@@ -57,6 +58,8 @@ async function checkQuickReplyAccess(replyId: string, userId: number): Promise<{
 // GET - ดึงข้อความตอบกลับ
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    await connectDB();
+    
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
       return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
@@ -75,19 +78,22 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึง' }, { status: 403 });
     }
 
-    const replies = await query(
-      `SELECT qr.*, lc.channel_name
-       FROM quick_replies qr
-       LEFT JOIN line_channels lc ON qr.channel_id = lc.id
-       WHERE qr.id = ?`,
-      [id]
-    );
+    const reply = await QuickReply.findById(id)
+      .populate('channel_id', 'channel_name')
+      .lean();
 
-    if (!Array.isArray(replies) || replies.length === 0) {
+    if (!reply) {
       return NextResponse.json({ success: false, message: 'ไม่พบข้อความตอบกลับ' }, { status: 404 });
     }
 
-    return NextResponse.json({ success: true, data: replies[0] });
+    return NextResponse.json({
+      success: true,
+      data: {
+        ...reply,
+        id: reply._id,
+        channel_name: (reply.channel_id as any)?.channel_name || null,
+      },
+    });
   } catch (error) {
     console.error('Get quick reply error:', error);
     return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
@@ -97,6 +103,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 // PUT - อัพเดทข้อความตอบกลับ (เฉพาะ owner)
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    await connectDB();
+    
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
       return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
@@ -109,7 +117,6 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     const { id } = await params;
     const body = await request.json();
-    const { title, shortcut, message_type, content, flex_content, media_url, channel_id, is_active } = body;
 
     // ตรวจสอบว่าเป็น owner
     const { isOwner } = await checkQuickReplyAccess(id, payload.userId);
@@ -117,53 +124,22 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'เฉพาะเจ้าของเท่านั้นที่แก้ไขได้' }, { status: 403 });
     }
 
-    // อัพเดทเฉพาะฟิลด์ที่ส่งมา
-    const updates: string[] = [];
-    const values: any[] = [];
+    const updateData: any = {};
 
-    if (title !== undefined) {
-      updates.push('title = ?');
-      values.push(title);
-    }
-    if (shortcut !== undefined) {
-      updates.push('shortcut = ?');
-      values.push(shortcut);
-    }
-    if (message_type !== undefined) {
-      updates.push('message_type = ?');
-      values.push(message_type);
-    }
-    if (content !== undefined) {
-      updates.push('content = ?');
-      values.push(content);
-    }
-    if (flex_content !== undefined) {
-      updates.push('flex_content = ?');
-      values.push(flex_content ? JSON.stringify(flex_content) : null);
-    }
-    if (media_url !== undefined) {
-      updates.push('media_url = ?');
-      values.push(media_url);
-    }
-    if (channel_id !== undefined) {
-      updates.push('channel_id = ?');
-      values.push(channel_id);
-    }
-    if (is_active !== undefined) {
-      updates.push('is_active = ?');
-      values.push(is_active ? 1 : 0);
-    }
+    if (body.title !== undefined) updateData.title = body.title;
+    if (body.shortcut !== undefined) updateData.shortcut = body.shortcut;
+    if (body.message_type !== undefined) updateData.message_type = body.message_type;
+    if (body.content !== undefined) updateData.content = body.content;
+    if (body.flex_content !== undefined) updateData.flex_content = body.flex_content;
+    if (body.media_url !== undefined) updateData.media_url = body.media_url;
+    if (body.channel_id !== undefined) updateData.channel_id = body.channel_id;
+    if (body.is_active !== undefined) updateData.is_active = body.is_active;
 
-    if (updates.length === 0) {
+    if (Object.keys(updateData).length === 0) {
       return NextResponse.json({ success: false, message: 'ไม่มีข้อมูลที่จะอัพเดท' }, { status: 400 });
     }
 
-    values.push(id, payload.userId);
-
-    await query(
-      `UPDATE quick_replies SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`,
-      values
-    );
+    await QuickReply.findByIdAndUpdate(id, updateData);
 
     return NextResponse.json({ success: true, message: 'อัพเดทสำเร็จ' });
   } catch (error) {
@@ -175,6 +151,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 // DELETE - ลบข้อความตอบกลับ (เฉพาะ owner)
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
+    await connectDB();
+    
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
       return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
@@ -187,12 +165,12 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     const { id } = await params;
 
-    const result: any = await query(
-      'DELETE FROM quick_replies WHERE id = ? AND user_id = ?',
-      [id, payload.userId]
-    );
+    const result = await QuickReply.deleteOne({
+      _id: id,
+      user_id: payload.userId,
+    });
 
-    if (result.affectedRows === 0) {
+    if (result.deletedCount === 0) {
       return NextResponse.json({ success: false, message: 'ไม่พบข้อความตอบกลับหรือไม่มีสิทธิ์' }, { status: 404 });
     }
 
@@ -206,6 +184,8 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 // POST - เพิ่ม use count (ทุกคนที่มีสิทธิ์ใช้ได้)
 export async function POST(request: NextRequest, { params }: RouteParams) {
   try {
+    await connectDB();
+    
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
       return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
@@ -224,10 +204,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์' }, { status: 403 });
     }
 
-    await query(
-      'UPDATE quick_replies SET use_count = use_count + 1 WHERE id = ?',
-      [id]
-    );
+    await QuickReply.findByIdAndUpdate(id, { $inc: { use_count: 1 } });
 
     return NextResponse.json({ success: true });
   } catch (error) {

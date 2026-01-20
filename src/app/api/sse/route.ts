@@ -1,65 +1,59 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
+import { connectDB } from '@/lib/mongodb';
 import { verifyToken } from '@/lib/auth';
-import { addClient, removeClient, getClients } from '@/lib/notifier';
+import { addClient, removeClient } from '@/lib/notifier';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-// GET - SSE endpoint for realtime notifications
 export async function GET(request: NextRequest) {
   try {
-    const token = request.cookies.get('auth_token')?.value;
+    await connectDB();
+    
+    const { searchParams } = new URL(request.url);
+    // รับ token จาก query string หรือ cookie
+    let token = searchParams.get('token');
+    
     if (!token) {
-      console.log('❌ [SSE] No auth token');
-      return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
+      token = request.cookies.get('auth_token')?.value || null;
+    }
+    
+    if (!token) {
+      return new Response('Unauthorized', { status: 401 });
     }
 
     const payload = verifyToken(token);
     if (!payload) {
-      console.log('❌ [SSE] Invalid token');
-      return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
+      return new Response('Invalid Token', { status: 401 });
     }
 
     const userId = payload.userId;
-    console.log(`🔌 [SSE] User ${userId} connecting...`);
-
-    const encoder = new TextEncoder();
 
     const stream = new ReadableStream({
       start(controller) {
-        // Add this client to the notifier
+        const encoder = new TextEncoder();
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'connected', userId })}\n\n`));
+
         addClient(userId, controller);
-        
-        // Log current clients
-        const clients = getClients();
-        console.log(`✅ [SSE] User ${userId} connected. Total users with SSE: ${clients.size}`);
-        clients.forEach((controllers, uid) => {
-          console.log(`   - User ${uid}: ${controllers.size} connection(s)`);
-        });
 
-        // Send initial connection message
-        const data = JSON.stringify({ 
-          type: 'connected', 
-          userId: userId,
-          timestamp: new Date().toISOString() 
-        });
-        controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-
-        // Keep connection alive with heartbeat
-        const heartbeat = setInterval(() => {
+        const pingInterval = setInterval(() => {
           try {
-            controller.enqueue(encoder.encode(`: heartbeat\n\n`));
+            controller.enqueue(encoder.encode(`: ping\n\n`));
           } catch {
-            clearInterval(heartbeat);
+            clearInterval(pingInterval);
           }
         }, 30000);
 
-        // Cleanup on close
         request.signal.addEventListener('abort', () => {
-          clearInterval(heartbeat);
+          clearInterval(pingInterval);
           removeClient(userId, controller);
-          console.log(`🔌 [SSE] User ${userId} disconnected`);
+          try {
+            controller.close();
+          } catch {}
         });
+      },
+      cancel() {
+        removeClient(userId, undefined as any);
       },
     });
 
@@ -73,6 +67,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('SSE error:', error);
-    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
+    return new Response('Internal Server Error', { status: 500 });
   }
 }

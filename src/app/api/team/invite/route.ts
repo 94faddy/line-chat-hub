@@ -1,10 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
-import { verifyToken, generateVerificationToken } from '@/lib/auth';
+import { connectDB } from '@/lib/mongodb';
+import { AdminPermission, LineChannel } from '@/models';
+import { verifyToken } from '@/lib/auth';
+import crypto from 'crypto';
 
-// POST - สร้าง invite link
+// POST - สร้างลิงก์เชิญทีมงาน
 export async function POST(request: NextRequest) {
   try {
+    await connectDB();
+    
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
       return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
@@ -16,51 +20,57 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { channel_id, permissions } = body;
+    const { 
+      channel_id,
+      can_reply = true,
+      can_view_all = false,
+      can_broadcast = false,
+      can_manage_tags = false,
+    } = body;
+
+    // ถ้าระบุ channel_id ให้ตรวจสอบว่าเป็นเจ้าของหรือไม่
+    if (channel_id) {
+      const channel = await LineChannel.findOne({
+        _id: channel_id,
+        user_id: payload.userId,
+      });
+      
+      if (!channel) {
+        return NextResponse.json({ success: false, message: 'ไม่พบ Channel หรือไม่ใช่เจ้าของ' }, { status: 404 });
+      }
+    }
 
     // สร้าง invite token
-    const inviteToken = generateVerificationToken();
-    
-    // กำหนดวันหมดอายุ (7 วัน)
-    const expiresAt = new Date();
-    expiresAt.setDate(expiresAt.getDate() + 7);
-    const expiresAtStr = expiresAt.toISOString().slice(0, 19).replace('T', ' ');
+    const inviteToken = crypto.randomBytes(32).toString('hex');
 
-    // ลบ pending invites เก่าที่ยังไม่มีคนรับ (ของ owner นี้)
-    await query(
-      `DELETE FROM admin_permissions 
-       WHERE owner_id = ? AND admin_id = owner_id AND status = 'pending' AND invite_token IS NOT NULL
-       AND (channel_id = ? OR (channel_id IS NULL AND ? IS NULL))`,
-      [payload.userId, channel_id || null, channel_id || null]
-    );
+    // สร้าง AdminPermission แบบ pending
+    const permission = new AdminPermission({
+      owner_id: payload.userId,
+      admin_id: null, // ยังไม่มีคนรับเชิญ
+      channel_id: channel_id || null,
+      can_reply,
+      can_view_all,
+      can_broadcast,
+      can_manage_tags,
+      status: 'pending',
+      invite_token: inviteToken,
+    });
 
-    // สร้าง permission พร้อม invite token
-    // ใช้ owner_id เป็น placeholder สำหรับ admin_id
-    // เมื่อ user รับ invite จะอัพเดท admin_id เป็น user ที่รับ
-    const permissionsData = permissions || { can_reply: true };
-    
-    const result: any = await query(
-      `INSERT INTO admin_permissions (owner_id, admin_id, channel_id, permissions, status, invite_token, invite_expires_at)
-       VALUES (?, ?, ?, ?, 'pending', ?, ?)`,
-      [payload.userId, payload.userId, channel_id || null, JSON.stringify(permissionsData), inviteToken, expiresAtStr]
-    );
+    await permission.save();
 
-    const inviteUrl = `${process.env.NEXT_PUBLIC_APP_URL}/auth/accept-invite?token=${inviteToken}`;
-
-    console.log(`🔗 [Team Invite] Created invite link for user ${payload.userId}, token: ${inviteToken}`);
+    // สร้าง URL สำหรับเชิญ
+    const inviteUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/invite/${inviteToken}`;
 
     return NextResponse.json({
       success: true,
-      message: 'สร้างลิงก์เชิญสำเร็จ',
       data: {
-        invite_url: inviteUrl,
+        id: permission._id,
         invite_token: inviteToken,
-        expires_at: expiresAtStr,
-        id: result.insertId
-      }
+        invite_url: inviteUrl,
+      },
     });
-  } catch (error: any) {
-    console.error('Invite error:', error);
-    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด: ' + (error.message || 'Unknown') }, { status: 500 });
+  } catch (error) {
+    console.error('Create invite error:', error);
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }

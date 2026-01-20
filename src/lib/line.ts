@@ -1,260 +1,261 @@
-import axios from 'axios';
-import crypto from 'crypto';
+/**
+ * LINE Messaging API Helper
+ */
 
-const LINE_API_BASE = 'https://api.line.me/v2';
-const LINE_DATA_API_BASE = 'https://api-data.line.me/v2';
-
-export interface LineProfile {
-  userId: string;
-  displayName: string;
-  pictureUrl?: string;
-  statusMessage?: string;
-  language?: string;
-}
-
-export interface LineMessage {
+interface LineMessage {
   type: string;
   text?: string;
   originalContentUrl?: string;
   previewImageUrl?: string;
   packageId?: string;
   stickerId?: string;
+  duration?: number;
+  [key: string]: any;
 }
 
-export interface LineWebhookEvent {
-  type: string;
-  message?: {
-    id: string;
-    type: string;
-    text?: string;
-    contentProvider?: {
-      type: string;
-    };
-    stickerId?: string;
-    packageId?: string;
-  };
-  replyToken?: string;
-  source: {
-    type: string;
-    userId: string;
-    groupId?: string;
-    roomId?: string;
-  };
-  timestamp: number;
-}
-
-export class LineClient {
-  private channelAccessToken: string;
-  private channelSecret: string;
-
-  constructor(channelAccessToken: string, channelSecret: string) {
-    this.channelAccessToken = channelAccessToken;
-    this.channelSecret = channelSecret;
-  }
-
-  // ตรวจสอบ signature ของ webhook
-  validateSignature(body: string, signature: string): boolean {
-    const hash = crypto
-      .createHmac('SHA256', this.channelSecret)
-      .update(body)
-      .digest('base64');
-    return hash === signature;
-  }
-
-  // ดึงโปรไฟล์ผู้ใช้
-  async getProfile(userId: string): Promise<LineProfile> {
-    const response = await axios.get(`${LINE_API_BASE}/bot/profile/${userId}`, {
-      headers: {
-        Authorization: `Bearer ${this.channelAccessToken}`,
-      },
-    });
-    return response.data;
-  }
-
-  // ส่งข้อความตอบกลับ
-  async replyMessage(replyToken: string, messages: LineMessage | LineMessage[]): Promise<void> {
-    // ตรวจสอบว่า messages เป็น array หรือไม่ ถ้าไม่ใช่ให้แปลงเป็น array
-    const messagesArray = Array.isArray(messages) ? messages : [messages];
-    
-    await axios.post(
-      `${LINE_API_BASE}/bot/message/reply`,
-      {
-        replyToken,
-        messages: messagesArray,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${this.channelAccessToken}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-  }
-
-  // ส่งข้อความ push
-  async pushMessage(to: string, messages: LineMessage | LineMessage[]): Promise<void> {
-    // ตรวจสอบว่า messages เป็น array หรือไม่ ถ้าไม่ใช่ให้แปลงเป็น array
-    const messagesArray = Array.isArray(messages) ? messages : [messages];
-    
-    await axios.post(
-      `${LINE_API_BASE}/bot/message/push`,
-      {
-        to,
-        messages: messagesArray,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${this.channelAccessToken}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-  }
-
-  // ส่งข้อความ multicast
-  async multicastMessage(to: string[], messages: LineMessage | LineMessage[]): Promise<void> {
-    const messagesArray = Array.isArray(messages) ? messages : [messages];
-    
-    await axios.post(
-      `${LINE_API_BASE}/bot/message/multicast`,
-      {
-        to,
-        messages: messagesArray,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${this.channelAccessToken}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-  }
-
-  // ส่งข้อความ broadcast
-  async broadcastMessage(messages: LineMessage | LineMessage[]): Promise<void> {
-    const messagesArray = Array.isArray(messages) ? messages : [messages];
-    
-    await axios.post(
-      `${LINE_API_BASE}/bot/message/broadcast`,
-      {
-        messages: messagesArray,
-      },
-      {
-        headers: {
-          Authorization: `Bearer ${this.channelAccessToken}`,
-          'Content-Type': 'application/json',
-        },
-      }
-    );
-  }
-
-  // ดาวน์โหลดไฟล์
-  async getMessageContent(messageId: string): Promise<Buffer> {
-    const response = await axios.get(
-      `${LINE_DATA_API_BASE}/bot/message/${messageId}/content`,
-      {
-        headers: {
-          Authorization: `Bearer ${this.channelAccessToken}`,
-        },
-        responseType: 'arraybuffer',
-      }
-    );
-    return Buffer.from(response.data);
-  }
-
-  // ดึงข้อมูล Channel
-  async getBotInfo(): Promise<any> {
-    const response = await axios.get(`${LINE_API_BASE}/bot/info`, {
-      headers: {
-        Authorization: `Bearer ${this.channelAccessToken}`,
-      },
-    });
-    return response.data;
-  }
-
-  // ดึงจำนวน quota ที่เหลือ
-  async getMessageQuota(): Promise<any> {
-    const response = await axios.get(`${LINE_API_BASE}/bot/message/quota`, {
-      headers: {
-        Authorization: `Bearer ${this.channelAccessToken}`,
-      },
-    });
-    return response.data;
-  }
-
-  // ดึงจำนวนผู้ติดตาม
-  async getFollowerCount(): Promise<number> {
-    try {
-      const response = await axios.get(`${LINE_API_BASE}/bot/insight/followers`, {
-        headers: {
-          Authorization: `Bearer ${this.channelAccessToken}`,
-        },
-      });
-      return response.data.followers || 0;
-    } catch {
-      return 0;
-    }
-  }
-}
-
-// Helper function สำหรับสร้าง LINE messages
-export function createTextMessage(text: string): LineMessage {
-  return {
-    type: 'text',
-    text,
-  };
-}
-
-export function createImageMessage(originalUrl: string, previewUrl?: string): LineMessage {
-  return {
-    type: 'image',
-    originalContentUrl: originalUrl,
-    previewImageUrl: previewUrl || originalUrl,
-  };
-}
-
-export function createStickerMessage(packageId: string, stickerId: string): LineMessage {
-  return {
-    type: 'sticker',
-    packageId,
-    stickerId,
-  };
-}
-
-export function createFlexMessage(altText: string, contents: any): LineMessage {
-  return {
-    type: 'flex',
-    altText,
-    contents,
-  } as any;
-}
-
-// Helper function สำหรับส่ง broadcast ไปยังผู้ใช้แต่ละคน
-export async function sendBroadcastMessage(
-  accessToken: string,
+/**
+ * ส่งข้อความไปยัง LINE user
+ */
+export async function pushMessage(
+  channelAccessToken: string,
   userId: string,
   message: LineMessage | LineMessage[]
-): Promise<void> {
-  // ตรวจสอบว่า message เป็น array หรือไม่ ถ้าไม่ใช่ให้แปลงเป็น array
-  const messagesArray = Array.isArray(message) ? message : [message];
+): Promise<any> {
+  const messages = Array.isArray(message) ? message : [message];
   
-  await axios.post(
-    `${LINE_API_BASE}/bot/message/push`,
-    {
-      to: userId,
-      messages: messagesArray,
-    },
-    {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
+  
+  try {
+    console.log('📤 [LINE API] Calling push message...');
+    console.log('📤 [LINE API] User ID:', userId);
+    
+    const response = await fetch('https://api.line.me/v2/bot/message/push', {
+      method: 'POST',
       headers: {
-        Authorization: `Bearer ${accessToken}`,
         'Content-Type': 'application/json',
+        'Authorization': `Bearer ${channelAccessToken}`,
       },
+      body: JSON.stringify({
+        to: userId,
+        messages: messages,
+      }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+    
+    console.log('📤 [LINE API] Response status:', response.status);
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      console.error('📤 [LINE API] Error data:', errorData);
+      const error: any = new Error(errorData.message || 'LINE API Error');
+      error.response = { data: errorData };
+      throw error;
     }
-  );
+
+    return response.json().catch(() => ({}));
+  } catch (err: any) {
+    clearTimeout(timeout);
+    
+    if (err.name === 'AbortError') {
+      console.error('📤 [LINE API] Request timeout');
+      const error: any = new Error('Request timeout');
+      error.response = { data: { message: 'Request timeout after 30 seconds' } };
+      throw error;
+    }
+    
+    console.error('📤 [LINE API] Fetch error:', err.message);
+    console.error('📤 [LINE API] Error cause:', err.cause);
+    throw err;
+  }
 }
 
-// Standalone validation function
-export function validateSignature(body: string, signature: string, channelSecret: string): boolean {
+/**
+ * ตอบกลับข้อความ (Reply)
+ */
+export async function replyMessage(
+  channelAccessToken: string,
+  replyToken: string,
+  message: LineMessage | LineMessage[]
+): Promise<any> {
+  const messages = Array.isArray(message) ? message : [message];
+  
+  const response = await fetch('https://api.line.me/v2/bot/message/reply', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${channelAccessToken}`,
+    },
+    body: JSON.stringify({
+      replyToken,
+      messages: messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const error: any = new Error(errorData.message || 'LINE API Error');
+    error.response = { data: errorData };
+    throw error;
+  }
+
+  return response.json().catch(() => ({}));
+}
+
+/**
+ * ดึงข้อมูล Profile ของ user
+ */
+export async function getProfile(
+  channelAccessToken: string,
+  userId: string
+): Promise<{
+  userId: string;
+  displayName: string;
+  pictureUrl?: string;
+  statusMessage?: string;
+  language?: string;
+}> {
+  const response = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${channelAccessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const error: any = new Error(errorData.message || 'LINE API Error');
+    error.response = { data: errorData };
+    throw error;
+  }
+
+  return response.json();
+}
+
+/**
+ * ดาวน์โหลด content (รูป, วิดีโอ, เสียง, ไฟล์)
+ */
+export async function getContent(
+  channelAccessToken: string,
+  messageId: string
+): Promise<ArrayBuffer> {
+  const response = await fetch(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${channelAccessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error('Failed to get content');
+  }
+
+  return response.arrayBuffer();
+}
+
+/**
+ * ดึงข้อมูล Channel
+ */
+export async function getChannelInfo(
+  channelAccessToken: string
+): Promise<{
+  userId: string;
+  basicId: string;
+  displayName: string;
+  pictureUrl?: string;
+  chatMode: string;
+  markAsReadMode: string;
+}> {
+  const response = await fetch('https://api.line.me/v2/bot/info', {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${channelAccessToken}`,
+    },
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const error: any = new Error(errorData.message || 'LINE API Error');
+    error.response = { data: errorData };
+    throw error;
+  }
+
+  return response.json();
+}
+
+/**
+ * Broadcast ข้อความไปทุกคน
+ */
+export async function broadcastMessage(
+  channelAccessToken: string,
+  message: LineMessage | LineMessage[]
+): Promise<any> {
+  const messages = Array.isArray(message) ? message : [message];
+  
+  const response = await fetch('https://api.line.me/v2/bot/message/broadcast', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${channelAccessToken}`,
+    },
+    body: JSON.stringify({
+      messages: messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const error: any = new Error(errorData.message || 'LINE API Error');
+    error.response = { data: errorData };
+    throw error;
+  }
+
+  return response.json().catch(() => ({}));
+}
+
+/**
+ * Multicast ส่งข้อความไปหลายคน
+ */
+export async function multicastMessage(
+  channelAccessToken: string,
+  userIds: string[],
+  message: LineMessage | LineMessage[]
+): Promise<any> {
+  const messages = Array.isArray(message) ? message : [message];
+  
+  const response = await fetch('https://api.line.me/v2/bot/message/multicast', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${channelAccessToken}`,
+    },
+    body: JSON.stringify({
+      to: userIds,
+      messages: messages,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const error: any = new Error(errorData.message || 'LINE API Error');
+    error.response = { data: errorData };
+    throw error;
+  }
+
+  return response.json().catch(() => ({}));
+}
+
+/**
+ * Validate LINE Signature
+ */
+export function validateSignature(
+  body: string,
+  signature: string,
+  channelSecret: string
+): boolean {
+  const crypto = require('crypto');
   const hash = crypto
     .createHmac('SHA256', channelSecret)
     .update(body)
@@ -262,84 +263,54 @@ export function validateSignature(body: string, signature: string, channelSecret
   return hash === signature;
 }
 
-// Get user profile standalone
-export async function getUserProfile(accessToken: string, userId: string): Promise<LineProfile> {
-  const response = await axios.get(`${LINE_API_BASE}/bot/profile/${userId}`, {
+/**
+ * Alias for getProfile - ดึงข้อมูล Profile ของ user
+ */
+export async function getUserProfile(
+  channelAccessToken: string,
+  userId: string
+): Promise<{
+  userId: string;
+  displayName: string;
+  pictureUrl?: string;
+  statusMessage?: string;
+  language?: string;
+}> {
+  const response = await fetch(`https://api.line.me/v2/bot/profile/${userId}`, {
+    method: 'GET',
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      'Authorization': `Bearer ${channelAccessToken}`,
     },
   });
-  return response.data;
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const error: any = new Error(errorData.message || 'LINE API Error');
+    error.response = { data: errorData };
+    throw error;
+  }
+
+  return response.json();
 }
 
-// Get channel info standalone
-export async function getChannelInfo(accessToken: string): Promise<any> {
-  const response = await axios.get(`${LINE_API_BASE}/bot/info`, {
+/**
+ * Alias for getContent - ดาวน์โหลด content (รูป, วิดีโอ, เสียง, ไฟล์)
+ */
+export async function getMessageContent(
+  channelAccessToken: string,
+  messageId: string
+): Promise<Buffer> {
+  const response = await fetch(`https://api-data.line.me/v2/bot/message/${messageId}/content`, {
+    method: 'GET',
     headers: {
-      Authorization: `Bearer ${accessToken}`,
+      'Authorization': `Bearer ${channelAccessToken}`,
     },
   });
-  return response.data;
-}
 
-// Push message standalone - รองรับทั้ง single message และ array
-export async function pushMessage(
-  accessToken: string,
-  to: string,
-  message: LineMessage | LineMessage[]
-): Promise<void> {
-  // ตรวจสอบว่า message เป็น array หรือไม่ ถ้าไม่ใช่ให้แปลงเป็น array
-  const messagesArray = Array.isArray(message) ? message : [message];
-  
-  await axios.post(
-    `${LINE_API_BASE}/bot/message/push`,
-    {
-      to,
-      messages: messagesArray,
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-    }
-  );
-}
+  if (!response.ok) {
+    throw new Error('Failed to get content');
+  }
 
-// Get message content standalone
-export async function getMessageContent(accessToken: string, messageId: string): Promise<Buffer> {
-  const response = await axios.get(
-    `${LINE_DATA_API_BASE}/bot/message/${messageId}/content`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-      responseType: 'arraybuffer',
-    }
-  );
-  return Buffer.from(response.data);
-}
-
-// Reply message standalone - รองรับทั้ง single message และ array
-export async function replyMessage(
-  accessToken: string,
-  replyToken: string,
-  messages: LineMessage | LineMessage[]
-): Promise<void> {
-  // ตรวจสอบว่า messages เป็น array หรือไม่ ถ้าไม่ใช่ให้แปลงเป็น array
-  const messagesArray = Array.isArray(messages) ? messages : [messages];
-  
-  await axios.post(
-    `${LINE_API_BASE}/bot/message/reply`,
-    {
-      replyToken,
-      messages: messagesArray,
-    },
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        'Content-Type': 'application/json',
-      },
-    }
-  );
+  const arrayBuffer = await response.arrayBuffer();
+  return Buffer.from(arrayBuffer);
 }

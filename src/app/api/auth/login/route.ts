@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
-import { comparePassword, generateToken, setAuthCookie } from '@/lib/auth';
-import { UserWithPassword } from '@/types';
+import { connectDB } from '@/lib/mongodb';
+import { User } from '@/models';
+import { comparePassword, generateToken } from '@/lib/auth';
 
 export async function POST(request: NextRequest) {
   try {
+    await connectDB();
+    
     const { email, password } = await request.json();
 
     if (!email || !password) {
@@ -15,19 +17,14 @@ export async function POST(request: NextRequest) {
     }
 
     // ค้นหา user
-    const users = await query<UserWithPassword[]>(
-      'SELECT * FROM users WHERE email = ?',
-      [email]
-    );
+    const user = await User.findOne({ email: email.toLowerCase() });
 
-    if (users.length === 0) {
+    if (!user) {
       return NextResponse.json(
         { success: false, message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' },
         { status: 401 }
       );
     }
-
-    const user = users[0];
 
     // ตรวจสอบสถานะ
     if (user.status === 'pending') {
@@ -54,11 +51,12 @@ export async function POST(request: NextRequest) {
     }
 
     // อัพเดท last_login
-    await query('UPDATE users SET last_login = NOW() WHERE id = ?', [user.id]);
+    user.last_login = new Date();
+    await user.save();
 
     // สร้าง JWT token
     const token = generateToken({
-      userId: user.id,
+      userId: user._id.toString(),
       email: user.email,
       role: user.role,
       name: user.name,
@@ -69,14 +67,17 @@ export async function POST(request: NextRequest) {
       success: true,
       message: 'เข้าสู่ระบบสำเร็จ',
       data: {
-        id: user.id,
+        id: user._id,
         email: user.email,
         name: user.name,
         role: user.role,
       },
     });
 
-    response.headers.set('Set-Cookie', `auth_token=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${7 * 24 * 60 * 60}`);
+    response.headers.set(
+      'Set-Cookie',
+      `auth_token=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${7 * 24 * 60 * 60}`
+    );
 
     return response;
   } catch (error) {

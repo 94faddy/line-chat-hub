@@ -1,36 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { connectDB } from '@/lib/mongodb';
+import { LineChannel, AdminPermission, Conversation, Message, LineUser, Broadcast } from '@/models';
 import { verifyToken } from '@/lib/auth';
+import mongoose from 'mongoose';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
 // Helper: ตรวจสอบสิทธิ์เข้าถึง channel
-async function checkChannelAccess(channelId: string, userId: number): Promise<{ hasAccess: boolean; isOwner: boolean }> {
-  // เช็คว่าเป็น owner
-  const ownerCheck = await query(
-    'SELECT id FROM line_channels WHERE id = ? AND user_id = ?',
-    [channelId, userId]
-  );
+async function checkChannelAccess(channelId: string, userId: string): Promise<{ hasAccess: boolean; isOwner: boolean }> {
+  const userObjectId = new mongoose.Types.ObjectId(userId);
   
-  if (Array.isArray(ownerCheck) && ownerCheck.length > 0) {
+  // เช็คว่าเป็น owner
+  const channel = await LineChannel.findOne({
+    _id: channelId,
+    user_id: userObjectId,
+  });
+  
+  if (channel) {
     return { hasAccess: true, isOwner: true };
   }
   
   // เช็คว่าเป็น admin
-  const adminCheck = await query(
-    `SELECT ap.id FROM admin_permissions ap
-     INNER JOIN line_channels lc ON (
-       (ap.channel_id = lc.id AND ap.channel_id IS NOT NULL)
-       OR (ap.owner_id = lc.user_id AND ap.channel_id IS NULL)
-     )
-     WHERE lc.id = ? AND ap.admin_id = ? AND ap.status = 'active'`,
-    [channelId, userId]
-  );
+  const adminCheck = await AdminPermission.findOne({
+    admin_id: userObjectId,
+    status: 'active',
+    $or: [
+      { channel_id: channelId },
+      { channel_id: null }, // Has access to all channels of owner
+    ],
+  });
   
-  if (Array.isArray(adminCheck) && adminCheck.length > 0) {
-    return { hasAccess: true, isOwner: false };
+  if (adminCheck) {
+    // Verify the channel belongs to the owner in the permission
+    const targetChannel = await LineChannel.findById(channelId);
+    if (targetChannel && adminCheck.owner_id.equals(targetChannel.user_id)) {
+      return { hasAccess: true, isOwner: false };
+    }
   }
   
   return { hasAccess: false, isOwner: false };
@@ -39,6 +46,8 @@ async function checkChannelAccess(channelId: string, userId: number): Promise<{ 
 // GET - ดึงข้อมูล channel เดียว
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
+    await connectDB();
+    
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
       return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
@@ -57,16 +66,15 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึง Channel นี้' }, { status: 403 });
     }
 
-    const channels = await query(
-      `SELECT * FROM line_channels WHERE id = ?`,
-      [channelId]
-    );
+    const channel = await LineChannel.findById(channelId)
+      .select('-__v')
+      .lean();
 
-    if (!Array.isArray(channels) || channels.length === 0) {
+    if (!channel) {
       return NextResponse.json({ success: false, message: 'ไม่พบ Channel' }, { status: 404 });
     }
 
-    return NextResponse.json({ success: true, data: channels[0] });
+    return NextResponse.json({ success: true, data: { ...channel, id: channel._id } });
   } catch (error: any) {
     console.error('Error fetching channel:', error);
     return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
@@ -76,6 +84,8 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 // PUT - อัพเดท channel (เฉพาะ owner)
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    await connectDB();
+    
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
       return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
@@ -97,14 +107,13 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     }
 
     // อัพเดท channel
-    await query(
-      `UPDATE line_channels 
-       SET channel_name = ?, channel_access_token = ?, channel_secret = ?, updated_at = NOW()
-       WHERE id = ? AND user_id = ?`,
-      [channel_name, channel_access_token, channel_secret, channelId, payload.userId]
+    const updated = await LineChannel.findByIdAndUpdate(
+      channelId,
+      { channel_name, channel_access_token, channel_secret },
+      { new: true }
     );
 
-    return NextResponse.json({ success: true, message: 'อัพเดท Channel สำเร็จ' });
+    return NextResponse.json({ success: true, message: 'อัพเดท Channel สำเร็จ', data: updated });
   } catch (error: any) {
     console.error('Error updating channel:', error);
     return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
@@ -114,6 +123,8 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 // DELETE - ลบ channel (เฉพาะ owner)
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
+    await connectDB();
+    
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
       return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
@@ -127,50 +138,33 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { id: channelId } = await params;
 
     // ตรวจสอบว่าเป็นเจ้าของ channel
-    const existing = await query(
-      `SELECT id, channel_name FROM line_channels WHERE id = ? AND user_id = ?`,
-      [channelId, payload.userId]
-    );
+    const channel = await LineChannel.findOne({
+      _id: channelId,
+      user_id: payload.userId,
+    });
 
-    if (!Array.isArray(existing) || existing.length === 0) {
+    if (!channel) {
       return NextResponse.json({ success: false, message: 'ไม่พบ Channel หรือไม่มีสิทธิ์' }, { status: 404 });
     }
 
-    const channelName = (existing[0] as any).channel_name;
+    const channelName = channel.channel_name;
 
     // ลบข้อมูลที่เกี่ยวข้องทั้งหมด
-    try {
-      await query(`DELETE FROM messages WHERE channel_id = ?`, [channelId]);
-      await query(`DELETE FROM conversations WHERE channel_id = ?`, [channelId]);
-      await query(`DELETE FROM line_users WHERE channel_id = ?`, [channelId]);
-      await query(`DELETE FROM admin_permissions WHERE channel_id = ?`, [channelId]);
-      
-      try {
-        await query(`DELETE FROM rich_menus WHERE channel_id = ?`, [channelId]);
-      } catch (e) {}
-      
-      try {
-        await query(`DELETE FROM broadcast_logs WHERE channel_id = ?`, [channelId]);
-      } catch (e) {}
+    await Message.deleteMany({ channel_id: channelId });
+    await Conversation.deleteMany({ channel_id: channelId });
+    await LineUser.deleteMany({ channel_id: channelId });
+    await AdminPermission.deleteMany({ channel_id: channelId });
+    await Broadcast.deleteMany({ channel_id: channelId });
 
-      await query(
-        `DELETE FROM line_channels WHERE id = ? AND user_id = ?`,
-        [channelId, payload.userId]
-      );
+    // ลบ channel
+    await LineChannel.findByIdAndDelete(channelId);
 
-      console.log(`🗑️ Channel deleted: ${channelName} (ID: ${channelId}) by user ${payload.userId}`);
+    console.log(`🗑️ Channel deleted: ${channelName} (ID: ${channelId}) by user ${payload.userId}`);
 
-      return NextResponse.json({ 
-        success: true, 
-        message: `ลบ Channel "${channelName}" สำเร็จ` 
-      });
-    } catch (deleteError: any) {
-      console.error('Error deleting channel data:', deleteError);
-      return NextResponse.json({ 
-        success: false, 
-        message: 'ไม่สามารถลบข้อมูลได้: ' + deleteError.message 
-      }, { status: 500 });
-    }
+    return NextResponse.json({ 
+      success: true, 
+      message: `ลบ Channel "${channelName}" สำเร็จ` 
+    });
   } catch (error: any) {
     console.error('Error deleting channel:', error);
     return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });

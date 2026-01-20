@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { connectDB } from '@/lib/mongodb';
+import { User } from '@/models';
 import { hashPassword } from '@/lib/auth';
-import { User } from '@/types';
 
 export async function POST(request: NextRequest) {
   try {
+    await connectDB();
+    
     const { token, password } = await request.json();
 
     if (!token || !password) {
@@ -22,34 +24,26 @@ export async function POST(request: NextRequest) {
     }
 
     // ค้นหา user จาก token
-    const users = await query<User[]>(
-      `SELECT * FROM users 
-       WHERE reset_token = ? 
-       AND reset_token_expires > NOW()`,
-      [token]
-    );
+    const user = await User.findOne({
+      reset_token: token,
+      reset_token_expires: { $gt: new Date() },
+    });
 
-    if (users.length === 0) {
+    if (!user) {
       return NextResponse.json(
         { success: false, message: 'ลิงก์หมดอายุหรือไม่ถูกต้อง' },
         { status: 400 }
       );
     }
 
-    const user = users[0];
-
     // Hash password ใหม่
     const hashedPassword = await hashPassword(password);
 
     // อัพเดท password และลบ token
-    await query(
-      `UPDATE users 
-       SET password = ?, 
-           reset_token = NULL, 
-           reset_token_expires = NULL 
-       WHERE id = ?`,
-      [hashedPassword, user.id]
-    );
+    user.password = hashedPassword;
+    user.reset_token = undefined;
+    user.reset_token_expires = undefined;
+    await user.save();
 
     return NextResponse.json({
       success: true,

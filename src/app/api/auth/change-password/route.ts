@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { connectDB } from '@/lib/mongodb';
+import { User } from '@/models';
 import { verifyToken, getTokenFromCookies, hashPassword, verifyPassword } from '@/lib/auth';
-import { RowDataPacket } from 'mysql2';
 
 // PUT - Change password
 export async function PUT(request: NextRequest) {
   try {
+    await connectDB();
+    
     const token = getTokenFromCookies(request);
     if (!token) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
@@ -34,17 +36,14 @@ export async function PUT(request: NextRequest) {
     }
 
     // Get current user
-    const [users] = await pool.query<RowDataPacket[]>(
-      'SELECT password FROM users WHERE id = ?',
-      [decoded.userId]
-    );
+    const user = await User.findById(decoded.userId);
 
-    if (users.length === 0) {
+    if (!user) {
       return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 });
     }
 
     // Verify current password
-    const isValid = await verifyPassword(current_password, users[0].password);
+    const isValid = await verifyPassword(current_password, user.password);
     if (!isValid) {
       return NextResponse.json(
         { success: false, error: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' },
@@ -56,10 +55,8 @@ export async function PUT(request: NextRequest) {
     const hashedPassword = await hashPassword(new_password);
 
     // Update password
-    await pool.query(
-      'UPDATE users SET password = ? WHERE id = ?',
-      [hashedPassword, decoded.userId]
-    );
+    user.password = hashedPassword;
+    await user.save();
 
     return NextResponse.json({ success: true, message: 'Password changed successfully' });
   } catch (error: any) {

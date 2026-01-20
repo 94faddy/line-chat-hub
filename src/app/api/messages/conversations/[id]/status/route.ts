@@ -1,35 +1,44 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { connectDB } from '@/lib/mongodb';
+import { Conversation, AdminPermission } from '@/models';
 import { verifyToken } from '@/lib/auth';
+import mongoose from 'mongoose';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
 // Helper function ตรวจสอบสิทธิ์เข้าถึง conversation
-async function checkConversationAccess(conversationId: string, userId: number): Promise<boolean> {
-  const result = await query(
-    `SELECT c.id FROM conversations c
-     INNER JOIN line_channels ch ON c.channel_id = ch.id
-     WHERE c.id = ? AND (
-       ch.user_id = ?
-       OR ch.id IN (
-         SELECT ap.channel_id FROM admin_permissions ap 
-         WHERE ap.admin_id = ? AND ap.status = 'active' AND ap.channel_id IS NOT NULL
-       )
-       OR ch.user_id IN (
-         SELECT ap.owner_id FROM admin_permissions ap 
-         WHERE ap.admin_id = ? AND ap.status = 'active' AND ap.channel_id IS NULL
-       )
-     )`,
-    [conversationId, userId, userId, userId]
-  );
-  return Array.isArray(result) && result.length > 0;
+async function checkConversationAccess(conversationId: string, userId: string): Promise<boolean> {
+  const userObjectId = new mongoose.Types.ObjectId(userId);
+  
+  const conversation = await Conversation.findById(conversationId).populate('channel_id', 'user_id');
+  if (!conversation) return false;
+  
+  const channel = conversation.channel_id as any;
+  if (!channel) return false;
+  
+  if (channel.user_id.equals(userObjectId)) {
+    return true;
+  }
+  
+  const adminPermission = await AdminPermission.findOne({
+    admin_id: userObjectId,
+    status: 'active',
+    $or: [
+      { channel_id: conversation.channel_id },
+      { owner_id: channel.user_id, channel_id: null },
+    ],
+  });
+  
+  return !!adminPermission;
 }
 
 // PUT - อัพเดทสถานะการสนทนา
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
+    await connectDB();
+    
     const { id } = await params;
     
     const token = request.cookies.get('auth_token')?.value;
@@ -50,16 +59,13 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'สถานะไม่ถูกต้อง' }, { status: 400 });
     }
 
-    // ตรวจสอบสิทธิ์การเข้าถึง (รวม admin permissions)
+    // ตรวจสอบสิทธิ์การเข้าถึง
     const hasAccess = await checkConversationAccess(id, payload.userId);
     if (!hasAccess) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึงการสนทนานี้' }, { status: 403 });
     }
 
-    await query(
-      'UPDATE conversations SET status = ? WHERE id = ?',
-      [status, id]
-    );
+    await Conversation.findByIdAndUpdate(id, { status });
 
     return NextResponse.json({ success: true, message: 'อัพเดทสถานะสำเร็จ' });
   } catch (error) {

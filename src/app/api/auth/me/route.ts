@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { connectDB } from '@/lib/mongodb';
+import { User } from '@/models';
 import { verifyToken } from '@/lib/auth';
-import { User } from '@/types';
 
 export async function GET(request: NextRequest) {
   try {
+    await connectDB();
+    
     const token = request.cookies.get('auth_token')?.value;
 
     if (!token) {
@@ -22,13 +24,10 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    const users = await query<User[]>(
-      `SELECT id, email, name, avatar, role, status, email_verified_at, last_login, created_at 
-       FROM users WHERE id = ?`,
-      [payload.userId]
-    );
+    const user = await User.findById(payload.userId)
+      .select('-password -verification_token -reset_token -reset_token_expires -__v');
 
-    if (users.length === 0) {
+    if (!user) {
       return NextResponse.json(
         { success: false, message: 'ไม่พบผู้ใช้' },
         { status: 404 }
@@ -37,7 +36,7 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: users[0],
+      data: user,
     });
   } catch (error) {
     console.error('Get user error:', error);

@@ -6,7 +6,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 
 export interface JWTPayload {
-  userId: number;
+  userId: string; // Changed from number to string for MongoDB ObjectId
   email: string;
   role: string;
   name: string;

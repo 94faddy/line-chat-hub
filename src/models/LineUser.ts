@@ -1,0 +1,81 @@
+import mongoose, { Schema, Document, Model, Types } from 'mongoose';
+
+export interface ILineUser extends Document {
+  _id: Types.ObjectId;
+  channel_id: Types.ObjectId;
+  line_user_id: string;
+  display_name?: string;
+  picture_url?: string;
+  status_message?: string;
+  language?: string;
+  tags?: string[];
+  notes?: string;
+  is_blocked: boolean;
+  is_spam: boolean;
+  last_message_at?: Date;
+  created_at: Date;
+  updated_at: Date;
+}
+
+const LineUserSchema = new Schema<ILineUser>(
+  {
+    channel_id: {
+      type: Schema.Types.ObjectId,
+      ref: 'LineChannel',
+      required: true,
+      index: true,
+    },
+    line_user_id: {
+      type: String,
+      required: true,
+      index: true,
+    },
+    display_name: {
+      type: String,
+      default: 'Unknown',
+    },
+    picture_url: String,
+    status_message: String,
+    language: {
+      type: String,
+      default: 'th',
+    },
+    tags: [String],
+    notes: String,
+    is_blocked: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    is_spam: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    last_message_at: {
+      type: Date,
+      index: true,
+    },
+  },
+  {
+    timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
+    toJSON: {
+      virtuals: true,
+      transform: (_, ret) => {
+        ret.id = ret._id;
+        delete ret.__v;
+        return ret;
+      },
+    },
+  }
+);
+
+// Compound index for unique LINE user per channel
+LineUserSchema.index({ channel_id: 1, line_user_id: 1 }, { unique: true });
+LineUserSchema.index({ channel_id: 1, is_blocked: 1 });
+LineUserSchema.index({ channel_id: 1, last_message_at: -1 });
+
+const LineUser: Model<ILineUser> =
+  mongoose.models.LineUser || mongoose.model<ILineUser>('LineUser', LineUserSchema);
+
+export default LineUser;

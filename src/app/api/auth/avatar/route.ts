@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
+import { connectDB } from '@/lib/mongodb';
+import { User } from '@/models';
 import { verifyToken, getTokenFromCookies } from '@/lib/auth';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
@@ -8,6 +9,8 @@ import { existsSync } from 'fs';
 // POST - Upload avatar
 export async function POST(request: NextRequest) {
   try {
+    await connectDB();
+    
     const token = getTokenFromCookies(request);
     if (!token) {
       return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
@@ -63,10 +66,7 @@ export async function POST(request: NextRequest) {
 
     // Update user avatar in database
     const avatarUrl = `/uploads/avatars/${filename}`;
-    await pool.query(
-      'UPDATE users SET avatar = ? WHERE id = ?',
-      [avatarUrl, decoded.userId]
-    );
+    await User.findByIdAndUpdate(decoded.userId, { avatar: avatarUrl });
 
     return NextResponse.json({ 
       success: true, 

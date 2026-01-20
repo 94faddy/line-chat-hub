@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { connectDB } from '@/lib/mongodb';
+import { User } from '@/models';
 import { hashPassword, generateVerificationToken } from '@/lib/auth';
 import { sendVerificationEmail } from '@/lib/email';
-import { User } from '@/types';
 
 export async function POST(request: NextRequest) {
   try {
+    await connectDB();
+    
     const { name, email, password } = await request.json();
 
     // Validation
@@ -24,12 +26,9 @@ export async function POST(request: NextRequest) {
     }
 
     // ตรวจสอบว่ามีอีเมลนี้อยู่แล้วหรือไม่
-    const existingUsers = await query<User[]>(
-      'SELECT id FROM users WHERE email = ?',
-      [email]
-    );
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
 
-    if (existingUsers.length > 0) {
+    if (existingUser) {
       return NextResponse.json(
         { success: false, message: 'อีเมลนี้ถูกใช้งานแล้ว' },
         { status: 400 }
@@ -43,11 +42,15 @@ export async function POST(request: NextRequest) {
     const verificationToken = generateVerificationToken();
 
     // สร้าง user
-    await query(
-      `INSERT INTO users (name, email, password, verification_token, status) 
-       VALUES (?, ?, ?, ?, 'pending')`,
-      [name, email, hashedPassword, verificationToken]
-    );
+    const user = new User({
+      name,
+      email: email.toLowerCase(),
+      password: hashedPassword,
+      verification_token: verificationToken,
+      status: 'pending',
+    });
+
+    await user.save();
 
     // ส่งอีเมลยืนยัน
     try {

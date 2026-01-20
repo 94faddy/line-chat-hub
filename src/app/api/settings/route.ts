@@ -1,121 +1,102 @@
 import { NextRequest, NextResponse } from 'next/server';
-import pool from '@/lib/db';
-import { verifyToken, getTokenFromCookies } from '@/lib/auth';
-import { RowDataPacket, ResultSetHeader } from 'mysql2';
+import { connectDB } from '@/lib/mongodb';
+import { User } from '@/models';
+import { verifyToken } from '@/lib/auth';
 
-// Default settings
-const defaultSettings = {
-  notifications: {
-    email_new_message: true,
-    email_daily_report: false,
-    browser_notifications: true,
-    sound_enabled: true
-  },
-  chat: {
-    auto_assign: false,
-    auto_reply_enabled: true,
-    working_hours_only: false,
-    working_hours_start: '09:00',
-    working_hours_end: '18:00'
-  },
-  general: {
-    timezone: 'Asia/Bangkok',
-    language: 'th',
-    date_format: 'DD/MM/YYYY'
-  }
-};
-
-// GET - Get user settings
+// GET - ดึงการตั้งค่าของผู้ใช้
 export async function GET(request: NextRequest) {
   try {
-    const token = getTokenFromCookies(request);
-    if (!token) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
-    }
-
-    const decoded = verifyToken(token);
-    if (!decoded) {
-      return NextResponse.json({ success: false, error: 'Invalid token' }, { status: 401 });
-    }
-
-    const [rows] = await pool.query<RowDataPacket[]>(
-      'SELECT settings FROM users WHERE id = ?',
-      [decoded.userId]
-    );
-
-    if (rows.length === 0) {
-      return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 });
-    }
-
-    let settings = defaultSettings;
+    await connectDB();
     
-    if (rows[0].settings) {
-      try {
-        const userSettings = typeof rows[0].settings === 'string' 
-          ? JSON.parse(rows[0].settings) 
-          : rows[0].settings;
-        settings = {
-          notifications: { ...defaultSettings.notifications, ...userSettings.notifications },
-          chat: { ...defaultSettings.chat, ...userSettings.chat },
-          general: { ...defaultSettings.general, ...userSettings.general }
-        };
-      } catch (e) {
-        console.error('Error parsing settings:', e);
-      }
+    const token = request.cookies.get('auth_token')?.value;
+    if (!token) {
+      return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
     }
+
+    const payload = verifyToken(token);
+    if (!payload) {
+      return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
+    }
+
+    const user = await User.findById(payload.userId).select('settings').lean();
+
+    if (!user) {
+      return NextResponse.json({ success: false, message: 'ไม่พบผู้ใช้' }, { status: 404 });
+    }
+
+    // Default settings
+    const defaultSettings = {
+      notification_sound: true,
+      desktop_notification: true,
+      email_notification: false,
+      auto_reply: false,
+      auto_reply_message: '',
+      theme: 'light',
+      language: 'th',
+      message_preview: true,
+      enter_to_send: true,
+    };
+
+    const settings = { ...defaultSettings, ...(user.settings || {}) };
 
     return NextResponse.json({ success: true, data: settings });
-  } catch (error: any) {
-    console.error('Error fetching settings:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  } catch (error) {
+    console.error('Get settings error:', error);
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }
 
-// PUT - Update user settings
+// PUT - อัพเดทการตั้งค่า
 export async function PUT(request: NextRequest) {
   try {
-    const token = getTokenFromCookies(request);
+    await connectDB();
+    
+    const token = request.cookies.get('auth_token')?.value;
     if (!token) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
     }
 
-    const decoded = verifyToken(token);
-    if (!decoded) {
-      return NextResponse.json({ success: false, error: 'Invalid token' }, { status: 401 });
+    const payload = verifyToken(token);
+    if (!payload) {
+      return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
     const body = await request.json();
 
-    // Validate settings structure
-    const settings = {
-      notifications: {
-        email_new_message: body.notifications?.email_new_message ?? defaultSettings.notifications.email_new_message,
-        email_daily_report: body.notifications?.email_daily_report ?? defaultSettings.notifications.email_daily_report,
-        browser_notifications: body.notifications?.browser_notifications ?? defaultSettings.notifications.browser_notifications,
-        sound_enabled: body.notifications?.sound_enabled ?? defaultSettings.notifications.sound_enabled
-      },
-      chat: {
-        auto_assign: body.chat?.auto_assign ?? defaultSettings.chat.auto_assign,
-        auto_reply_enabled: body.chat?.auto_reply_enabled ?? defaultSettings.chat.auto_reply_enabled,
-        working_hours_only: body.chat?.working_hours_only ?? defaultSettings.chat.working_hours_only,
-        working_hours_start: body.chat?.working_hours_start ?? defaultSettings.chat.working_hours_start,
-        working_hours_end: body.chat?.working_hours_end ?? defaultSettings.chat.working_hours_end
-      },
-      general: {
-        timezone: body.general?.timezone ?? defaultSettings.general.timezone,
-        language: body.general?.language ?? defaultSettings.general.language,
-        date_format: body.general?.date_format ?? defaultSettings.general.date_format
+    // Validate และ sanitize settings
+    const allowedKeys = [
+      'notification_sound',
+      'desktop_notification',
+      'email_notification',
+      'auto_reply',
+      'auto_reply_message',
+      'theme',
+      'language',
+      'message_preview',
+      'enter_to_send',
+    ];
+
+    const user = await User.findById(payload.userId);
+    if (!user) {
+      return NextResponse.json({ success: false, message: 'ไม่พบผู้ใช้' }, { status: 404 });
+    }
+
+    // Merge settings
+    const currentSettings = user.settings || {};
+    const newSettings: any = { ...currentSettings };
+
+    for (const key of allowedKeys) {
+      if (body[key] !== undefined) {
+        newSettings[key] = body[key];
       }
-    };
+    }
 
-    await pool.query(
-      'UPDATE users SET settings = ? WHERE id = ?',
-      [JSON.stringify(settings), decoded.userId]
-    );
+    user.settings = newSettings;
+    await user.save();
 
-    return NextResponse.json({ success: true, data: settings });
-  } catch (error: any) {
-    console.error('Error updating settings:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ success: true, message: 'บันทึกการตั้งค่าสำเร็จ', data: newSettings });
+  } catch (error) {
+    console.error('Update settings error:', error);
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }

@@ -1,12 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { connectDB } from '@/lib/mongodb';
+import { Conversation, Message, LineChannel, LineUser, AdminPermission } from '@/models';
 import { verifyToken } from '@/lib/auth';
 import { pushMessage } from '@/lib/line';
 import { notifyNewMessage, notifyConversationUpdate } from '@/lib/notifier';
+import mongoose from 'mongoose';
 
 // POST - ส่งข้อความ
 export async function POST(request: NextRequest) {
   try {
+    await connectDB();
+    
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
       return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
@@ -24,34 +28,39 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบ' }, { status: 400 });
     }
 
-    // ดึงข้อมูลการสนทนา (รองรับ owner + admin permissions)
-    const conversations = await query(
-      `SELECT 
-        c.id, c.channel_id, c.line_user_id,
-        ch.channel_access_token,
-        lu.line_user_id as target_user_id
-       FROM conversations c
-       INNER JOIN line_channels ch ON c.channel_id = ch.id
-       INNER JOIN line_users lu ON c.line_user_id = lu.id
-       WHERE c.id = ? AND (
-         ch.user_id = ?
-         OR ch.id IN (
-           SELECT ap.channel_id FROM admin_permissions ap 
-           WHERE ap.admin_id = ? AND ap.status = 'active' AND ap.channel_id IS NOT NULL
-         )
-         OR ch.user_id IN (
-           SELECT ap.owner_id FROM admin_permissions ap 
-           WHERE ap.admin_id = ? AND ap.status = 'active' AND ap.channel_id IS NULL
-         )
-       )`,
-      [conversation_id, payload.userId, payload.userId, payload.userId]
-    );
+    const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    if (!Array.isArray(conversations) || conversations.length === 0) {
+    // ดึงข้อมูลการสนทนา
+    const conversation = await Conversation.findById(conversation_id)
+      .populate('channel_id')
+      .populate('line_user_id');
+
+    if (!conversation) {
       return NextResponse.json({ success: false, message: 'ไม่พบการสนทนา' }, { status: 404 });
     }
 
-    const conv = conversations[0] as any;
+    const channel = conversation.channel_id as any;
+    const lineUser = conversation.line_user_id as any;
+
+    // ตรวจสอบสิทธิ์
+    const isOwner = channel.user_id.equals(userId);
+    let hasAccess = isOwner;
+
+    if (!hasAccess) {
+      const adminPermission = await AdminPermission.findOne({
+        admin_id: userId,
+        status: 'active',
+        $or: [
+          { channel_id: channel._id },
+          { owner_id: channel.user_id, channel_id: null },
+        ],
+      });
+      hasAccess = !!adminPermission;
+    }
+
+    if (!hasAccess) {
+      return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์ส่งข้อความ' }, { status: 403 });
+    }
 
     // สร้าง LINE message object
     let lineMessage: any;
@@ -69,7 +78,6 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, message: 'กรุณาระบุ URL รูปภาพ' }, { status: 400 });
       }
       
-      // ตรวจสอบว่า URL เป็น HTTPS
       if (!media_url.startsWith('https://')) {
         return NextResponse.json({ 
           success: false, 
@@ -77,16 +85,11 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
 
-      // สำหรับ URL ที่ใช้ /uploads/ ให้แปลงเป็น /api/media/
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
       if (media_url.startsWith(baseUrl) && media_url.includes('/uploads/')) {
         processedMediaUrl = media_url.replace('/uploads/', '/api/media/');
       }
 
-      console.log('📸 [Send Image] Original URL:', media_url);
-      console.log('📸 [Send Image] Processed URL for LINE:', processedMediaUrl);
-      console.log('📸 [Send Image] Target user:', conv.target_user_id);
-      
       lineMessage = {
         type: 'image',
         originalContentUrl: processedMediaUrl,
@@ -128,12 +131,9 @@ export async function POST(request: NextRequest) {
       };
       messagePreview = '[เสียง]';
     } else if (message_type === 'sticker') {
-      // ✅ รองรับการส่ง Sticker
       if (!package_id || !sticker_id) {
         return NextResponse.json({ success: false, message: 'กรุณาระบุ package_id และ sticker_id' }, { status: 400 });
       }
-      
-      console.log('🎉 [Send Sticker] Package:', package_id, 'Sticker:', sticker_id);
       
       lineMessage = {
         type: 'sticker',
@@ -148,20 +148,13 @@ export async function POST(request: NextRequest) {
     // ส่งข้อความไปยัง LINE
     try {
       console.log('📤 [LINE Push] Sending message:', JSON.stringify(lineMessage));
-      await pushMessage(conv.channel_access_token, conv.target_user_id, lineMessage);
+      await pushMessage(channel.channel_access_token, lineUser.line_user_id, lineMessage);
       console.log('✅ [LINE Push] Message sent successfully');
     } catch (lineError: any) {
-      console.error('❌ [LINE Push] Error:', lineError.response?.data || lineError.message || lineError);
+      console.error('❌ [LINE Push] Error:', lineError.response?.data || lineError.message);
       
       const errorData = lineError.response?.data;
-      let errorMessage = 'Unknown error';
-      
-      if (errorData) {
-        errorMessage = errorData.message || JSON.stringify(errorData);
-        console.error('LINE API Error Details:', errorData);
-      } else {
-        errorMessage = lineError.message;
-      }
+      let errorMessage = errorData?.message || lineError.message || 'Unknown error';
       
       return NextResponse.json({ 
         success: false, 
@@ -170,37 +163,35 @@ export async function POST(request: NextRequest) {
     }
 
     // ใช้เวลา Thailand timezone
-    const thaiTime = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Bangkok' }).replace(' ', 'T');
+    const thaiTime = new Date();
 
-    // บันทึกข้อความลงฐานข้อมูล
-    const result: any = await query(
-      `INSERT INTO messages 
-       (conversation_id, channel_id, line_user_id, direction, message_type, content, media_url, sticker_id, package_id, sent_by, source_type, created_at) 
-       VALUES (?, ?, ?, 'outgoing', ?, ?, ?, ?, ?, ?, 'manual', ?)`,
-      [
-        conversation_id, 
-        conv.channel_id, 
-        conv.line_user_id, 
-        message_type, 
-        content || null, 
-        media_url || null, 
-        sticker_id || null,
-        package_id || null,
-        payload.userId, 
-        thaiTime
-      ]
-    );
+    // บันทึกข้อความ
+    const message = new Message({
+      conversation_id: conversation._id,
+      channel_id: channel._id,
+      line_user_id: lineUser._id,
+      direction: 'outgoing',
+      message_type,
+      content: content || null,
+      media_url: media_url || null,
+      sticker_id: sticker_id || null,
+      package_id: package_id || null,
+      sent_by: userId,
+      source_type: 'manual',
+      created_at: thaiTime,
+    });
+
+    await message.save();
 
     // อัพเดทการสนทนา
     const preview = messagePreview || (message_type === 'text' ? content : `[${message_type}]`);
-    await query(
-      `UPDATE conversations SET last_message_preview = ?, last_message_at = ? WHERE id = ?`,
-      [preview.substring(0, 100), thaiTime, conversation_id]
-    );
+    conversation.last_message_preview = preview.substring(0, 100);
+    conversation.last_message_at = thaiTime;
+    await conversation.save();
 
     // ส่ง realtime notification
     const newMessage = {
-      id: result.insertId,
+      id: message._id,
       direction: 'outgoing',
       message_type,
       content: content || null,
@@ -211,12 +202,12 @@ export async function POST(request: NextRequest) {
       created_at: thaiTime
     };
 
-    await notifyNewMessage(conv.channel_id, conversation_id, newMessage);
+    await notifyNewMessage(channel._id.toString(), conversation._id.toString(), newMessage);
 
     return NextResponse.json({
       success: true,
       message: 'ส่งข้อความสำเร็จ',
-      data: { id: result.insertId }
+      data: { id: message._id }
     });
   } catch (error: any) {
     console.error('Send message error:', error);
