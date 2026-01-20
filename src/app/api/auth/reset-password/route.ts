@@ -1,59 +1,92 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { User } from '@/models';
-import { hashPassword } from '@/lib/auth';
+import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 
+// POST - Reset password with token
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
-    
-    const { token, password } = await request.json();
 
-    if (!token || !password) {
-      return NextResponse.json(
-        { success: false, message: 'ข้อมูลไม่ครบถ้วน' },
-        { status: 400 }
-      );
+    const body = await request.json();
+    const { token, password, confirmPassword } = body;
+
+    // Validate input
+    if (!token) {
+      return NextResponse.json({ error: 'Reset token is required' }, { status: 400 });
     }
 
-    if (password.length < 6) {
-      return NextResponse.json(
-        { success: false, message: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร' },
-        { status: 400 }
-      );
+    if (!password || !confirmPassword) {
+      return NextResponse.json({ error: 'Password is required' }, { status: 400 });
     }
 
-    // ค้นหา user จาก token
+    if (password !== confirmPassword) {
+      return NextResponse.json({ error: 'Passwords do not match' }, { status: 400 });
+    }
+
+    if (password.length < 8) {
+      return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
+    }
+
+    // Hash the token to compare with stored hash
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    // Find user with valid reset token
     const user = await User.findOne({
-      reset_token: token,
-      reset_token_expires: { $gt: new Date() },
+      reset_token: tokenHash,
+      reset_token_expiry: { $gt: new Date() }
     });
 
     if (!user) {
-      return NextResponse.json(
-        { success: false, message: 'ลิงก์หมดอายุหรือไม่ถูกต้อง' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'Invalid or expired reset token' }, { status: 400 });
     }
 
-    // Hash password ใหม่
-    const hashedPassword = await hashPassword(password);
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
 
-    // อัพเดท password และลบ token
-    user.password = hashedPassword;
-    user.reset_token = undefined;
-    user.reset_token_expires = undefined;
-    await user.save();
-
-    return NextResponse.json({
-      success: true,
-      message: 'รีเซ็ตรหัสผ่านสำเร็จ',
+    // Update password and clear reset token
+    await User.findByIdAndUpdate(user._id, {
+      password: hashedPassword,
+      $unset: { reset_token: 1, reset_token_expiry: 1 }
     });
+
+    return NextResponse.json({ message: 'Password has been reset successfully' });
   } catch (error) {
     console.error('Reset password error:', error);
-    return NextResponse.json(
-      { success: false, message: 'เกิดข้อผิดพลาด' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+// GET - Verify reset token is valid
+export async function GET(request: NextRequest) {
+  try {
+    await connectDB();
+
+    const { searchParams } = new URL(request.url);
+    const token = searchParams.get('token');
+
+    if (!token) {
+      return NextResponse.json({ valid: false, error: 'Token is required' }, { status: 400 });
+    }
+
+    // Hash the token to compare with stored hash
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+    // Find user with valid reset token
+    const user = await User.findOne({
+      reset_token: tokenHash,
+      reset_token_expiry: { $gt: new Date() }
+    });
+
+    if (!user) {
+      return NextResponse.json({ valid: false, error: 'Invalid or expired reset token' });
+    }
+
+    return NextResponse.json({ valid: true });
+  } catch (error) {
+    console.error('Verify reset token error:', error);
+    return NextResponse.json({ valid: false, error: 'Internal server error' }, { status: 500 });
   }
 }

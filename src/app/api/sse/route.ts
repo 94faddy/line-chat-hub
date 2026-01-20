@@ -1,5 +1,4 @@
-import { NextRequest } from 'next/server';
-import { connectDB } from '@/lib/mongodb';
+import { NextRequest, NextResponse } from 'next/server';
 import { verifyToken } from '@/lib/auth';
 import { addClient, removeClient } from '@/lib/notifier';
 
@@ -8,53 +7,53 @@ export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
   try {
-    await connectDB();
-    
-    const { searchParams } = new URL(request.url);
-    // รับ token จาก query string หรือ cookie
-    let token = searchParams.get('token');
-    
+    const token = request.cookies.get('auth_token')?.value;
     if (!token) {
-      token = request.cookies.get('auth_token')?.value || null;
-    }
-    
-    if (!token) {
-      return new Response('Unauthorized', { status: 401 });
+      return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
     }
 
     const payload = verifyToken(token);
     if (!payload) {
-      return new Response('Invalid Token', { status: 401 });
+      return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
     const userId = payload.userId;
+    const encoder = new TextEncoder();
+    let controller: ReadableStreamDefaultController<Uint8Array>;
 
     const stream = new ReadableStream({
-      start(controller) {
-        const encoder = new TextEncoder();
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'connected', userId })}\n\n`));
-
+      start(ctrl) {
+        controller = ctrl;
+        
+        // Register client
         addClient(userId, controller);
+        
+        // Send initial connection message
+        try {
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'connected', userId })}\n\n`));
+        } catch (e) {
+          console.error('Error sending initial message:', e);
+        }
 
-        const pingInterval = setInterval(() => {
+        // Keep-alive every 30 seconds
+        const keepAlive = setInterval(() => {
           try {
-            controller.enqueue(encoder.encode(`: ping\n\n`));
-          } catch {
-            clearInterval(pingInterval);
+            controller.enqueue(encoder.encode(`: keep-alive\n\n`));
+          } catch (e) {
+            clearInterval(keepAlive);
+            removeClient(userId, controller);
           }
         }, 30000);
 
+        // Cleanup on abort
         request.signal.addEventListener('abort', () => {
-          clearInterval(pingInterval);
+          clearInterval(keepAlive);
           removeClient(userId, controller);
-          try {
-            controller.close();
-          } catch {}
         });
       },
       cancel() {
-        removeClient(userId, undefined as any);
-      },
+        removeClient(userId, controller);
+      }
     });
 
     return new Response(stream, {
@@ -67,6 +66,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error('SSE error:', error);
-    return new Response('Internal Server Error', { status: 500 });
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }

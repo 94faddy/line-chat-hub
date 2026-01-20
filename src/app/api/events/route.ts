@@ -1,63 +1,67 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import { verifyToken } from '@/lib/auth';
+import { verifyTokenFromRequest } from '@/lib/auth';
 import { addClient, removeClient } from '@/lib/notifier';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-// GET - SSE connection
+// GET - SSE endpoint for real-time events
 export async function GET(request: NextRequest) {
   try {
+    const user = verifyTokenFromRequest(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
     await connectDB();
-    
-    // ดึง token จาก query string (สำหรับ EventSource)
-    const { searchParams } = new URL(request.url);
-    const token = searchParams.get('token');
-    
-    if (!token) {
-      return new Response('Unauthorized', { status: 401 });
-    }
 
-    const payload = verifyToken(token);
-    if (!payload) {
-      return new Response('Invalid Token', { status: 401 });
-    }
+    // Create readable stream for SSE
+    const encoder = new TextEncoder();
+    let controller: ReadableStreamDefaultController<Uint8Array>;
+    let intervalId: NodeJS.Timeout;
+    let clientId: string;
 
-    const userId = payload.userId;
-
-    // สร้าง ReadableStream สำหรับ SSE
     const stream = new ReadableStream({
-      start(controller) {
-        // ส่ง initial connection message
-        const encoder = new TextEncoder();
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'connected', userId })}\n\n`));
+      start(c) {
+        controller = c;
+        clientId = `${user.id}_${Date.now()}`;
 
-        // เพิ่ม client เข้า notifier
-        addClient(userId, controller);
+        // Send initial connection message
+        const connectMessage = `data: ${JSON.stringify({ type: 'connected', clientId })}\n\n`;
+        controller.enqueue(encoder.encode(connectMessage));
 
-        // Keep-alive: ส่ง ping ทุก 30 วินาที
-        const pingInterval = setInterval(() => {
+        // Register client for notifications
+        const sendEvent = (event: any) => {
           try {
-            controller.enqueue(encoder.encode(`: ping\n\n`));
-          } catch {
-            clearInterval(pingInterval);
+            const message = `data: ${JSON.stringify(event)}\n\n`;
+            controller.enqueue(encoder.encode(message));
+          } catch (e) {
+            console.error('Error sending SSE event:', e);
           }
-        }, 30000);
+        };
 
-        // Cleanup เมื่อ connection ถูกปิด
-        request.signal.addEventListener('abort', () => {
-          clearInterval(pingInterval);
-          removeClient(userId, controller);
+        addClient(user.id, clientId, sendEvent);
+
+        // Keep connection alive with heartbeat
+        intervalId = setInterval(() => {
           try {
-            controller.close();
-          } catch {}
-        });
+            const heartbeat = `data: ${JSON.stringify({ type: 'heartbeat', time: Date.now() })}\n\n`;
+            controller.enqueue(encoder.encode(heartbeat));
+          } catch (e) {
+            clearInterval(intervalId);
+          }
+        }, 30000); // Every 30 seconds
       },
       cancel() {
-        // Connection cancelled
-        removeClient(userId, undefined as any);
-      },
+        // Cleanup when client disconnects
+        if (intervalId) {
+          clearInterval(intervalId);
+        }
+        if (clientId) {
+          removeClient(user.id, clientId);
+        }
+      }
     });
 
     return new Response(stream, {
@@ -65,11 +69,11 @@ export async function GET(request: NextRequest) {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache, no-transform',
         'Connection': 'keep-alive',
-        'X-Accel-Buffering': 'no', // สำหรับ nginx
-      },
+        'X-Accel-Buffering': 'no'
+      }
     });
   } catch (error) {
-    console.error('SSE error:', error);
-    return new Response('Internal Server Error', { status: 500 });
+    console.error('Events SSE error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

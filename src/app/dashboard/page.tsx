@@ -11,6 +11,7 @@ import {
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 import { FlexMessageRenderer, LinkifyText } from '@/components/FlexMessageRenderer';
+import QuickRepliesPanel from '@/components/QuickRepliesPanel';
 
 interface Channel {
   id: number;
@@ -1466,12 +1467,12 @@ export default function InboxPage() {
                   
                   {/* Channel & Tags */}
                   <div className="flex items-center gap-1 mb-1 flex-wrap">
-                    <span className="tag bg-green-100 text-green-700 text-xs">
+                    <span key={`channel-${conv.id}`} className="tag bg-green-100 text-green-700 text-xs">
                       {conv.channel?.channel_name}
                     </span>
                     {conv.tags?.slice(0, 2).map(tag => (
                       <span 
-                        key={tag.id} 
+                        key={`tag-${tag.id}`} 
                         className="tag text-xs text-white"
                         style={{ backgroundColor: tag.color }}
                       >
@@ -1513,12 +1514,12 @@ export default function InboxPage() {
                     {selectedConversation.line_user?.display_name || 'Unknown'}
                   </h2>
                   <div className="flex items-center gap-2">
-                    <span className="tag bg-green-100 text-green-700 text-xs">
+                    <span key="header-channel" className="tag bg-green-100 text-green-700 text-xs">
                       {selectedConversation.channel?.channel_name}
                     </span>
                     {selectedConversation.tags?.map(tag => (
                       <span 
-                        key={tag.id} 
+                        key={`header-tag-${tag.id}`} 
                         className="tag text-xs text-white"
                         style={{ backgroundColor: tag.color }}
                       >
@@ -1703,36 +1704,23 @@ export default function InboxPage() {
               />
             )}
 
+            {/* Quick Replies Panel - อยู่นอก form เพื่อป้องกัน nested form */}
+            {showQuickReplies && (
+              <div className="bg-white border-t border-gray-200 px-4 pt-3">
+                <QuickRepliesPanel
+                  compact={true}
+                  currentChannelId={selectedConversation?.channel_id}
+                  onSelect={(reply) => {
+                    handleQuickReplySelect(reply);
+                    setShowQuickReplies(false);
+                  }}
+                  onClose={() => setShowQuickReplies(false)}
+                />
+              </div>
+            )}
+
             {/* Message Input */}
-            <form onSubmit={handleSendMessage} className="bg-white border-t border-gray-200 p-4">
-              {/* Quick Replies Panel */}
-              {showQuickReplies && quickReplies.length > 0 && (
-                <div className="mb-3 p-2 bg-gray-50 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-gray-700">ข้อความตอบกลับ</span>
-                    <button 
-                      type="button"
-                      onClick={() => setShowQuickReplies(false)}
-                      className="text-gray-400 hover:text-gray-600"
-                    >
-                      <FiX className="w-4 h-4" />
-                    </button>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {quickReplies.map(reply => (
-                      <button
-                        key={reply.id}
-                        type="button"
-                        onClick={() => handleQuickReplySelect(reply)}
-                        className="px-3 py-1.5 bg-white border border-gray-200 rounded-full text-sm hover:bg-gray-100 transition-colors"
-                      >
-                        {reply.shortcut ? `/${reply.shortcut}` : ''} {reply.title}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
-              
+            <form onSubmit={handleSendMessage} className={`bg-white ${!showQuickReplies ? 'border-t border-gray-200' : ''} p-4 pt-3`}>
               <div className="flex items-center gap-2">
                 {/* Image Upload */}
                 <input

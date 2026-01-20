@@ -2,9 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { User } from '@/models';
 import { verifyToken } from '@/lib/auth';
-import crypto from 'crypto';
+import { v4 as uuidv4 } from 'uuid';
 
-// GET - ดึง bot token (masked)
+// GET - ดึง Bot API Token
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -21,27 +21,9 @@ export async function GET(request: NextRequest) {
 
     const user = await User.findById(payload.userId).select('bot_api_token').lean();
 
-    if (!user) {
-      return NextResponse.json({ success: false, message: 'ไม่พบผู้ใช้' }, { status: 404 });
-    }
-
-    // Mask token: แสดงแค่ 8 ตัวแรก และ 4 ตัวท้าย
-    let maskedToken = null;
-    if (user.bot_api_token) {
-      const token = user.bot_api_token;
-      if (token.length > 12) {
-        maskedToken = token.substring(0, 8) + '...' + token.substring(token.length - 4);
-      } else {
-        maskedToken = '***';
-      }
-    }
-
     return NextResponse.json({
       success: true,
-      data: {
-        has_token: !!user.bot_api_token,
-        masked_token: maskedToken,
-      },
+      data: { bot_api_token: user?.bot_api_token || null }
     });
   } catch (error) {
     console.error('Get bot token error:', error);
@@ -49,7 +31,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - สร้าง/รีเซ็ต bot token ใหม่
+// POST - สร้าง/รีเซ็ต Bot API Token
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
@@ -64,20 +46,15 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
-    // สร้าง token ใหม่: prefix + random + user_id_hash
-    const prefix = 'lch_'; // Line Chat Hub
-    const randomPart = crypto.randomBytes(24).toString('hex');
-    const userIdHash = crypto.createHash('sha256').update(payload.userId).digest('hex').substring(0, 8);
-    const newToken = `${prefix}${randomPart}${userIdHash}`;
+    // สร้าง token ใหม่
+    const botApiToken = `bot_${uuidv4().replace(/-/g, '')}`;
 
-    await User.findByIdAndUpdate(payload.userId, { bot_api_token: newToken });
+    await User.findByIdAndUpdate(payload.userId, { bot_api_token: botApiToken });
 
     return NextResponse.json({
       success: true,
-      message: 'สร้าง API Token สำเร็จ',
-      data: {
-        token: newToken, // แสดง full token ครั้งเดียวตอนสร้าง
-      },
+      message: 'สร้าง Bot API Token สำเร็จ',
+      data: { bot_api_token: botApiToken }
     });
   } catch (error) {
     console.error('Generate bot token error:', error);
@@ -85,7 +62,7 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// DELETE - ลบ bot token
+// DELETE - ลบ Bot API Token
 export async function DELETE(request: NextRequest) {
   try {
     await connectDB();
@@ -100,9 +77,9 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
-    await User.findByIdAndUpdate(payload.userId, { $unset: { bot_api_token: 1 } });
+    await User.findByIdAndUpdate(payload.userId, { bot_api_token: null });
 
-    return NextResponse.json({ success: true, message: 'ลบ API Token สำเร็จ' });
+    return NextResponse.json({ success: true, message: 'ลบ Bot API Token สำเร็จ' });
   } catch (error) {
     console.error('Delete bot token error:', error);
     return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });

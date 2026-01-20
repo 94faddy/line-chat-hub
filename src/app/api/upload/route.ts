@@ -2,125 +2,115 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { verifyToken } from '@/lib/auth';
 import { writeFile, mkdir } from 'fs/promises';
-import { existsSync } from 'fs';
 import path from 'path';
+import { existsSync } from 'fs';
 import crypto from 'crypto';
 
-// Config
-const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10MB
-const ALLOWED_IMAGE_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-const ALLOWED_VIDEO_TYPES = ['video/mp4', 'video/quicktime', 'video/webm'];
-const ALLOWED_AUDIO_TYPES = ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/m4a'];
-const ALLOWED_FILE_TYPES = [
-  ...ALLOWED_IMAGE_TYPES,
-  ...ALLOWED_VIDEO_TYPES,
-  ...ALLOWED_AUDIO_TYPES,
-  'application/pdf',
-];
+// Allowed file types and their MIME types
+const ALLOWED_TYPES: Record<string, string[]> = {
+  image: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
+  video: ['video/mp4', 'video/webm', 'video/quicktime'],
+  audio: ['audio/mpeg', 'audio/wav', 'audio/ogg', 'audio/mp4'],
+  document: ['application/pdf', 'application/msword', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
+};
 
-// POST - อัพโหลดไฟล์
+const MAX_FILE_SIZE = 50 * 1024 * 1024; // 50MB
+
+// POST - Upload file
 export async function POST(request: NextRequest) {
   try {
-    await connectDB();
-    
+    // ดึง token จาก cookie
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
       return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
     }
 
-    const payload = verifyToken(token);
-    if (!payload) {
+    const user = verifyToken(token);
+    if (!user) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
+    await connectDB();
+
     const formData = await request.formData();
     const file = formData.get('file') as File;
-    const type = formData.get('type') as string || 'general'; // general, image, video, audio
+    const type = formData.get('type') as string || 'image';
 
     if (!file) {
       return NextResponse.json({ success: false, message: 'กรุณาเลือกไฟล์' }, { status: 400 });
     }
 
-    // ตรวจสอบขนาดไฟล์
+    // Validate file type
+    const allowedMimes = ALLOWED_TYPES[type] || ALLOWED_TYPES.image;
+    if (!allowedMimes.includes(file.type)) {
+      return NextResponse.json({ 
+        success: false,
+        message: `ประเภทไฟล์ไม่รองรับ รองรับเฉพาะ: ${allowedMimes.join(', ')}` 
+      }, { status: 400 });
+    }
+
+    // Validate file size
     if (file.size > MAX_FILE_SIZE) {
-      return NextResponse.json({ success: false, message: 'ไฟล์ใหญ่เกิน 10MB' }, { status: 400 });
+      return NextResponse.json({ 
+        success: false,
+        message: `ไฟล์ใหญ่เกินไป ขนาดสูงสุด ${MAX_FILE_SIZE / 1024 / 1024}MB` 
+      }, { status: 400 });
     }
 
-    // ตรวจสอบประเภทไฟล์
-    if (!ALLOWED_FILE_TYPES.includes(file.type)) {
-      return NextResponse.json({ success: false, message: 'ประเภทไฟล์ไม่รองรับ' }, { status: 400 });
-    }
-
-    // ตรวจสอบประเภทไฟล์ตาม type ที่ระบุ
-    if (type === 'image' && !ALLOWED_IMAGE_TYPES.includes(file.type)) {
-      return NextResponse.json({ success: false, message: 'กรุณาอัพโหลดไฟล์รูปภาพ' }, { status: 400 });
-    }
-    if (type === 'video' && !ALLOWED_VIDEO_TYPES.includes(file.type)) {
-      return NextResponse.json({ success: false, message: 'กรุณาอัพโหลดไฟล์วิดีโอ' }, { status: 400 });
-    }
-    if (type === 'audio' && !ALLOWED_AUDIO_TYPES.includes(file.type)) {
-      return NextResponse.json({ success: false, message: 'กรุณาอัพโหลดไฟล์เสียง' }, { status: 400 });
-    }
-
-    // สร้างชื่อไฟล์ใหม่
-    const ext = path.extname(file.name) || getExtension(file.type);
-    const randomName = crypto.randomBytes(16).toString('hex');
-    const fileName = `${randomName}${ext}`;
-
-    // สร้าง path ตามวันที่
-    const now = new Date();
-    const year = now.getFullYear();
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const relativePath = `uploads/${year}/${month}`;
-    const uploadDir = path.join(process.cwd(), 'public', relativePath);
-
-    // สร้าง directory ถ้ายังไม่มี
+    // Create uploads directory
+    const uploadDir = path.join(process.cwd(), 'public', 'uploads', type + 's');
     if (!existsSync(uploadDir)) {
       await mkdir(uploadDir, { recursive: true });
     }
 
-    // บันทึกไฟล์
-    const filePath = path.join(uploadDir, fileName);
+    // Generate unique filename
+    const ext = path.extname(file.name) || getExtensionFromMime(file.type);
+    const uniqueId = crypto.randomBytes(16).toString('hex');
+    const filename = `${uniqueId}${ext}`;
+    const filepath = path.join(uploadDir, filename);
+
+    // Save file
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
-    await writeFile(filePath, buffer);
+    await writeFile(filepath, buffer);
 
-    // URL สำหรับเข้าถึงไฟล์
-    const fileUrl = `/${relativePath}/${fileName}`;
+    // Build URL - ใช้ full URL
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
+    const fileUrl = `${baseUrl}/uploads/${type}s/${filename}`;
 
     return NextResponse.json({
       success: true,
-      message: 'อัพโหลดสำเร็จ',
+      message: 'File uploaded successfully',
       data: {
         url: fileUrl,
-        filename: fileName,
-        original_name: file.name,
+        filename: filename,
+        originalName: file.name,
         size: file.size,
-        type: file.type,
-      },
+        type: file.type
+      }
     });
   } catch (error) {
     console.error('Upload error:', error);
-    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
+    return NextResponse.json({ success: false, message: 'Internal server error' }, { status: 500 });
   }
 }
 
-// Helper: ดึงนามสกุลจาก mime type
-function getExtension(mimeType: string): string {
-  const map: Record<string, string> = {
+function getExtensionFromMime(mime: string): string {
+  const mimeToExt: Record<string, string> = {
     'image/jpeg': '.jpg',
     'image/png': '.png',
     'image/gif': '.gif',
     'image/webp': '.webp',
     'video/mp4': '.mp4',
-    'video/quicktime': '.mov',
     'video/webm': '.webm',
+    'video/quicktime': '.mov',
     'audio/mpeg': '.mp3',
     'audio/wav': '.wav',
     'audio/ogg': '.ogg',
-    'audio/m4a': '.m4a',
+    'audio/mp4': '.m4a',
     'application/pdf': '.pdf',
+    'application/msword': '.doc',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document': '.docx'
   };
-  
-  return map[mimeType] || '';
+  return mimeToExt[mime] || '';
 }

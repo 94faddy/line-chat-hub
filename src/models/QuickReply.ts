@@ -2,8 +2,8 @@ import mongoose, { Schema, Document, Model, Types } from 'mongoose';
 
 export interface IQuickReply extends Document {
   _id: Types.ObjectId;
-  user_id: Types.ObjectId;
-  channel_id?: Types.ObjectId;
+  channel_id: Types.ObjectId; // Required - ผูกกับ LINE Channel
+  created_by: Types.ObjectId; // User ที่สร้าง
   title: string;
   shortcut?: string;
   message_type: 'text' | 'image' | 'template' | 'flex';
@@ -18,15 +18,16 @@ export interface IQuickReply extends Document {
 
 const QuickReplySchema = new Schema<IQuickReply>(
   {
-    user_id: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-      index: true,
-    },
     channel_id: {
       type: Schema.Types.ObjectId,
       ref: 'LineChannel',
+      required: true, // บังคับต้องมี channel
+      index: true,
+    },
+    created_by: {
+      type: Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
       index: true,
     },
     title: {
@@ -73,9 +74,9 @@ const QuickReplySchema = new Schema<IQuickReply>(
   }
 );
 
-// Indexes
-QuickReplySchema.index({ user_id: 1, is_active: 1 });
-QuickReplySchema.index({ user_id: 1, channel_id: 1 });
+// Indexes - เปลี่ยนเป็น channel-based
+QuickReplySchema.index({ channel_id: 1, is_active: 1 });
+QuickReplySchema.index({ channel_id: 1, shortcut: 1 });
 
 const QuickReply: Model<IQuickReply> =
   mongoose.models.QuickReply || mongoose.model<IQuickReply>('QuickReply', QuickReplySchema);

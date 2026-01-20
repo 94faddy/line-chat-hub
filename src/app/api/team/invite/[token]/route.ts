@@ -36,11 +36,11 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         channel: permission.channel_id ? {
           name: (permission.channel_id as any)?.channel_name,
         } : { name: 'ทุก Channel' },
-        permissions: {
-          can_reply: permission.can_reply,
-          can_view_all: permission.can_view_all,
-          can_broadcast: permission.can_broadcast,
-          can_manage_tags: permission.can_manage_tags,
+        permissions: permission.permissions || {
+          can_reply: true,
+          can_view_all: false,
+          can_broadcast: false,
+          can_manage_tags: false,
         },
       },
     });

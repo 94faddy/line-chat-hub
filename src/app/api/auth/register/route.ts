@@ -1,74 +1,58 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { User } from '@/models';
-import { hashPassword, generateVerificationToken } from '@/lib/auth';
 import { sendVerificationEmail } from '@/lib/email';
+import bcrypt from 'bcryptjs';
+import { v4 as uuidv4 } from 'uuid';
 
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
     
-    const { name, email, password } = await request.json();
+    const body = await request.json();
+    const { email, password, name } = body;
 
-    // Validation
-    if (!name || !email || !password) {
-      return NextResponse.json(
-        { success: false, message: 'กรุณากรอกข้อมูลให้ครบถ้วน' },
-        { status: 400 }
-      );
+    if (!email || !password || !name) {
+      return NextResponse.json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบ' }, { status: 400 });
     }
 
-    if (password.length < 6) {
-      return NextResponse.json(
-        { success: false, message: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร' },
-        { status: 400 }
-      );
-    }
-
-    // ตรวจสอบว่ามีอีเมลนี้อยู่แล้วหรือไม่
+    // ตรวจสอบว่า email ซ้ำหรือไม่
     const existingUser = await User.findOne({ email: email.toLowerCase() });
-
     if (existingUser) {
-      return NextResponse.json(
-        { success: false, message: 'อีเมลนี้ถูกใช้งานแล้ว' },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, message: 'อีเมลนี้ถูกใช้งานแล้ว' }, { status: 400 });
     }
 
     // Hash password
-    const hashedPassword = await hashPassword(password);
+    const hashedPassword = await bcrypt.hash(password, 10);
 
     // สร้าง verification token
-    const verificationToken = generateVerificationToken();
+    const verificationToken = uuidv4();
 
-    // สร้าง user
-    const user = new User({
-      name,
+    // สร้าง user ใหม่
+    const newUser = new User({
       email: email.toLowerCase(),
       password: hashedPassword,
-      verification_token: verificationToken,
+      name,
+      role: 'user',
       status: 'pending',
+      verification_token: verificationToken
     });
 
-    await user.save();
+    await newUser.save();
 
-    // ส่งอีเมลยืนยัน
+    // ส่ง verification email
     try {
-      await sendVerificationEmail(email, name, verificationToken);
-    } catch (emailError) {
-      console.error('Failed to send verification email:', emailError);
-      // ยังคงสำเร็จแม้ส่งอีเมลไม่ได้ แต่แจ้งเตือน
+      await sendVerificationEmail(email, verificationToken);
+    } catch (e) {
+      console.error('Send verification email error:', e);
     }
 
     return NextResponse.json({
       success: true,
-      message: 'สมัครสมาชิกสำเร็จ กรุณาตรวจสอบอีเมลเพื่อยืนยันบัญชี',
+      message: 'ลงทะเบียนสำเร็จ กรุณาตรวจสอบอีเมลเพื่อยืนยันบัญชี'
     });
   } catch (error) {
     console.error('Register error:', error);
-    return NextResponse.json(
-      { success: false, message: 'เกิดข้อผิดพลาดในการสมัครสมาชิก' },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }

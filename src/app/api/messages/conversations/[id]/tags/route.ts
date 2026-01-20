@@ -8,44 +8,10 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-// Helper function ตรวจสอบสิทธิ์เข้าถึง conversation และได้ owner_id
-async function checkConversationAccessWithOwner(conversationId: string, userId: string): Promise<{ hasAccess: boolean; ownerId: string | null }> {
-  const userObjectId = new mongoose.Types.ObjectId(userId);
-  
-  const conversation = await Conversation.findById(conversationId).populate('channel_id', 'user_id');
-  if (!conversation) return { hasAccess: false, ownerId: null };
-  
-  const channel = conversation.channel_id as any;
-  if (!channel) return { hasAccess: false, ownerId: null };
-  
-  const ownerId = channel.user_id.toString();
-  
-  if (channel.user_id.equals(userObjectId)) {
-    return { hasAccess: true, ownerId };
-  }
-  
-  const adminPermission = await AdminPermission.findOne({
-    admin_id: userObjectId,
-    status: 'active',
-    $or: [
-      { channel_id: conversation.channel_id },
-      { owner_id: channel.user_id, channel_id: null },
-    ],
-  });
-  
-  if (adminPermission) {
-    return { hasAccess: true, ownerId };
-  }
-  
-  return { hasAccess: false, ownerId: null };
-}
-
-// GET - ดึง tags ของ conversation
+// GET - ดึง tags ของการสนทนา
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
-    
-    const { id } = await params;
     
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
@@ -57,27 +23,33 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
-    // ตรวจสอบสิทธิ์การเข้าถึง
-    const { hasAccess } = await checkConversationAccessWithOwner(id, payload.userId);
-    if (!hasAccess) {
-      return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึงการสนทนานี้' }, { status: 403 });
+    const { id } = await params;
+
+    const conversation = await Conversation.findById(id)
+      .populate('tags', 'name color')
+      .lean();
+
+    if (!conversation) {
+      return NextResponse.json({ success: false, message: 'ไม่พบการสนทนา' }, { status: 404 });
     }
 
-    const conversation = await Conversation.findById(id).populate('tags', 'name color description');
+    const tags = (conversation.tags || []).map((tag: any) => ({
+      id: tag._id,
+      name: tag.name,
+      color: tag.color
+    }));
 
-    return NextResponse.json({ success: true, data: conversation?.tags || [] });
+    return NextResponse.json({ success: true, data: tags });
   } catch (error) {
     console.error('Get conversation tags error:', error);
     return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }
 
-// PUT - อัพเดท tags ของ conversation
+// PUT - อัพเดท tags ของการสนทนา
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
-    
-    const { id } = await params;
     
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
@@ -89,29 +61,46 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
+    const { id } = await params;
     const body = await request.json();
-    const { tags } = body;
+    const { tag_ids } = body;
 
-    if (!Array.isArray(tags)) {
-      return NextResponse.json({ success: false, message: 'tags ต้องเป็น array' }, { status: 400 });
+    if (!Array.isArray(tag_ids)) {
+      return NextResponse.json({ success: false, message: 'tag_ids ต้องเป็น array' }, { status: 400 });
     }
 
-    // ตรวจสอบสิทธิ์และได้ owner_id (ใช้ tags ของ owner)
-    const { hasAccess, ownerId } = await checkConversationAccessWithOwner(id, payload.userId);
-    if (!hasAccess || !ownerId) {
+    // ดึงข้อมูลการสนทนา
+    const conversation = await Conversation.findById(id).populate('channel_id');
+    if (!conversation) {
+      return NextResponse.json({ success: false, message: 'ไม่พบการสนทนา' }, { status: 404 });
+    }
+
+    const channel = conversation.channel_id as any;
+    const userId = new mongoose.Types.ObjectId(payload.userId);
+
+    // ตรวจสอบสิทธิ์
+    const isOwner = channel.user_id.equals(userId);
+    let hasPermission = isOwner;
+    
+    if (!isOwner) {
+      const adminPerm = await AdminPermission.findOne({
+        admin_id: userId,
+        status: 'active',
+        $or: [
+          { channel_id: channel._id },
+          { channel_id: null, owner_id: channel.user_id }
+        ]
+      });
+      hasPermission = !!adminPerm;
+    }
+
+    if (!hasPermission) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึงการสนทนานี้' }, { status: 403 });
     }
 
-    // ตรวจสอบว่า tags เป็นของ owner หรือไม่
-    const validTags = await Tag.find({
-      _id: { $in: tags },
-      user_id: ownerId,
-    }).select('_id');
-
-    const validTagIds = validTags.map(t => t._id);
-
     // อัพเดท tags
-    await Conversation.findByIdAndUpdate(id, { tags: validTagIds });
+    const tagObjectIds = tag_ids.map((id: string) => new mongoose.Types.ObjectId(id));
+    await Conversation.findByIdAndUpdate(id, { tags: tagObjectIds });
 
     return NextResponse.json({ success: true, message: 'อัพเดท tags สำเร็จ' });
   } catch (error) {

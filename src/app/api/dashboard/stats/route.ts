@@ -1,211 +1,218 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import { LineChannel, LineUser, Conversation, Message, AdminPermission } from '@/models';
-import { verifyToken } from '@/lib/auth';
+import { User, LineChannel, LineUser, Conversation, Message, AdminPermission } from '@/models';
+import { verifyTokenFromRequest } from '@/lib/auth';
+import mongoose from 'mongoose';
 
-// Helper: ดึง channel IDs ที่ user มีสิทธิ์เข้าถึง
-async function getAccessibleChannelIds(userId: string): Promise<string[]> {
-  // Channel ที่เป็นเจ้าของ
-  const ownedChannels = await LineChannel.find({ user_id: userId }).select('_id').lean();
-  const channelIds = ownedChannels.map((c: any) => c._id.toString());
-  
-  // Channel ที่เป็น admin
-  const permissions = await AdminPermission.find({
-    admin_id: userId,
-    status: 'active',
-  }).populate('channel_id', '_id').lean();
-  
-  permissions.forEach((p: any) => {
-    if (p.channel_id && !channelIds.includes(p.channel_id._id.toString())) {
-      channelIds.push(p.channel_id._id.toString());
-    }
-  });
-  
-  return channelIds;
-}
-
-// GET - ดึงสถิติสำหรับ Dashboard
+// GET - Get dashboard statistics
 export async function GET(request: NextRequest) {
   try {
-    await connectDB();
-    
-    const token = request.cookies.get('auth_token')?.value;
-    if (!token) {
-      return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
+    const user = verifyTokenFromRequest(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const payload = verifyToken(token);
-    if (!payload) {
-      return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
-    }
+    await connectDB();
 
     const { searchParams } = new URL(request.url);
-    const channelId = searchParams.get('channel_id');
-    const period = searchParams.get('period') || '7d'; // 7d, 30d, 90d
+    const period = searchParams.get('period') || '7d'; // 7d, 30d, 90d, all
 
-    // ดึง channel IDs ที่มีสิทธิ์เข้าถึง
-    const channelIds = await getAccessibleChannelIds(payload.userId);
-
-    if (channelIds.length === 0) {
-      return NextResponse.json({
-        success: true,
-        data: {
-          total_channels: 0,
-          total_users: 0,
-          total_conversations: 0,
-          unread_conversations: 0,
-          messages_today: 0,
-          messages_this_period: 0,
-          new_users_this_period: 0,
-        },
-      });
-    }
-
-    // Filter channel ถ้าระบุ
-    const targetChannelIds = channelId && channelIds.includes(channelId) 
-      ? [channelId] 
-      : channelIds;
-
-    // คำนวณ date range
+    // Calculate date range
+    let startDate: Date | null = null;
     const now = new Date();
-    let periodStart: Date;
     
     switch (period) {
+      case '7d':
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        break;
       case '30d':
-        periodStart = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+        startDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
         break;
       case '90d':
-        periodStart = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+        startDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
         break;
-      default: // 7d
-        periodStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      default:
+        startDate = null;
     }
 
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    // Get user's channels (owned + admin access)
+    const ownedChannels = await LineChannel.find({ user_id: user.id }).select('_id');
+    const adminPermissions = await AdminPermission.find({ 
+      admin_id: user.id,
+      $or: [
+        { channel_id: { $ne: null } },
+        { owner_id: { $ne: null } }
+      ]
+    });
 
-    // สถิติพื้นฐาน
+    // Get all accessible channel IDs
+    const channelIds: mongoose.Types.ObjectId[] = ownedChannels.map(c => c._id);
+    
+    for (const perm of adminPermissions) {
+      if (perm.channel_id) {
+        channelIds.push(perm.channel_id);
+      } else if (perm.owner_id) {
+        // Get all channels owned by this owner
+        const ownerChannels = await LineChannel.find({ user_id: perm.owner_id }).select('_id');
+        channelIds.push(...ownerChannels.map(c => c._id));
+      }
+    }
+
+    // Remove duplicates
+    const uniqueChannelIds = [...new Set(channelIds.map(id => id.toString()))];
+
+    // Build date filter
+    const dateFilter: any = {};
+    if (startDate) {
+      dateFilter.created_at = { $gte: startDate };
+    }
+
+    // Get statistics
     const [
       totalChannels,
       totalUsers,
       totalConversations,
-      unreadConversations,
-      messagesToday,
-      messagesThisPeriod,
-      newUsersThisPeriod,
+      activeConversations,
+      totalMessages,
+      messagesInPeriod,
+      newUsersInPeriod,
+      messagesByDay
     ] = await Promise.all([
-      // จำนวน channel
-      LineChannel.countDocuments({ _id: { $in: targetChannelIds } }),
+      // Total channels count
+      uniqueChannelIds.length,
       
-      // จำนวน users
-      LineUser.countDocuments({ channel_id: { $in: targetChannelIds } }),
+      // Total LINE users
+      LineUser.countDocuments({ 
+        channel_id: { $in: uniqueChannelIds } 
+      }),
       
-      // จำนวน conversations
-      Conversation.countDocuments({ channel_id: { $in: targetChannelIds } }),
-      
-      // จำนวน unread conversations
+      // Total conversations
       Conversation.countDocuments({ 
-        channel_id: { $in: targetChannelIds },
-        status: 'unread',
+        channel_id: { $in: uniqueChannelIds } 
       }),
       
-      // ข้อความวันนี้
-      Message.countDocuments({
-        channel_id: { $in: targetChannelIds },
-        created_at: { $gte: todayStart },
+      // Active conversations
+      Conversation.countDocuments({ 
+        channel_id: { $in: uniqueChannelIds },
+        status: 'active'
       }),
       
-      // ข้อความในช่วงเวลา
-      Message.countDocuments({
-        channel_id: { $in: targetChannelIds },
-        created_at: { $gte: periodStart },
+      // Total messages
+      Message.countDocuments({ 
+        channel_id: { $in: uniqueChannelIds } 
       }),
       
-      // users ใหม่ในช่วงเวลา
-      LineUser.countDocuments({
-        channel_id: { $in: targetChannelIds },
-        created_at: { $gte: periodStart },
-      }),
+      // Messages in period
+      startDate ? Message.countDocuments({ 
+        channel_id: { $in: uniqueChannelIds },
+        created_at: { $gte: startDate }
+      }) : Message.countDocuments({ channel_id: { $in: uniqueChannelIds } }),
+      
+      // New users in period
+      startDate ? LineUser.countDocuments({ 
+        channel_id: { $in: uniqueChannelIds },
+        created_at: { $gte: startDate }
+      }) : LineUser.countDocuments({ channel_id: { $in: uniqueChannelIds } }),
+      
+      // Messages by day for chart
+      Message.aggregate([
+        {
+          $match: {
+            channel_id: { $in: uniqueChannelIds.map(id => new mongoose.Types.ObjectId(id)) },
+            ...(startDate && { created_at: { $gte: startDate } })
+          }
+        },
+        {
+          $group: {
+            _id: {
+              $dateToString: { format: '%Y-%m-%d', date: '$created_at' }
+            },
+            count: { $sum: 1 },
+            incoming: {
+              $sum: { $cond: [{ $eq: ['$sender_type', 'user'] }, 1, 0] }
+            },
+            outgoing: {
+              $sum: { $cond: [{ $eq: ['$sender_type', 'admin'] }, 1, 0] }
+            }
+          }
+        },
+        { $sort: { _id: 1 } }
+      ])
     ]);
 
-    // ข้อมูลกราฟ: ข้อความรายวัน
-    const messagesByDay = await Message.aggregate([
-      {
-        $match: {
-          channel_id: { $in: targetChannelIds.map((id: string) => new (require('mongoose').Types.ObjectId)(id)) },
-          created_at: { $gte: periodStart },
-        },
-      },
-      {
-        $group: {
-          _id: {
-            $dateToString: { format: '%Y-%m-%d', date: '$created_at' },
-          },
-          incoming: {
-            $sum: { $cond: [{ $eq: ['$direction', 'incoming'] }, 1, 0] },
-          },
-          outgoing: {
-            $sum: { $cond: [{ $eq: ['$direction', 'outgoing'] }, 1, 0] },
-          },
-          total: { $sum: 1 },
-        },
-      },
-      { $sort: { _id: 1 } },
-    ]);
-
-    // Top channels by messages
+    // Get top channels by messages
     const topChannels = await Message.aggregate([
       {
         $match: {
-          channel_id: { $in: targetChannelIds.map((id: string) => new (require('mongoose').Types.ObjectId)(id)) },
-          created_at: { $gte: periodStart },
-        },
+          channel_id: { $in: uniqueChannelIds.map(id => new mongoose.Types.ObjectId(id)) },
+          ...(startDate && { created_at: { $gte: startDate } })
+        }
       },
       {
         $group: {
           _id: '$channel_id',
-          count: { $sum: 1 },
-        },
+          message_count: { $sum: 1 }
+        }
       },
-      { $sort: { count: -1 } },
+      { $sort: { message_count: -1 } },
       { $limit: 5 },
       {
         $lookup: {
           from: 'linechannels',
           localField: '_id',
           foreignField: '_id',
-          as: 'channel',
-        },
+          as: 'channel'
+        }
       },
-      { $unwind: '$channel' },
-      {
-        $project: {
-          channel_id: '$_id',
-          channel_name: '$channel.channel_name',
-          count: 1,
-        },
-      },
+      { $unwind: '$channel' }
     ]);
 
+    // Get recent conversations
+    const recentConversations = await Conversation.find({
+      channel_id: { $in: uniqueChannelIds }
+    })
+      .sort({ last_message_at: -1 })
+      .limit(5)
+      .populate('line_user_id', 'display_name picture_url')
+      .populate('channel_id', 'name')
+      .lean();
+
     return NextResponse.json({
-      success: true,
-      data: {
-        summary: {
-          total_channels: totalChannels,
-          total_users: totalUsers,
-          total_conversations: totalConversations,
-          unread_conversations: unreadConversations,
-          messages_today: messagesToday,
-          messages_this_period: messagesThisPeriod,
-          new_users_this_period: newUsersThisPeriod,
-        },
-        charts: {
-          messages_by_day: messagesByDay,
-          top_channels: topChannels,
-        },
+      overview: {
+        total_channels: totalChannels,
+        total_users: totalUsers,
+        total_conversations: totalConversations,
+        active_conversations: activeConversations,
+        total_messages: totalMessages,
+        messages_in_period: messagesInPeriod,
+        new_users_in_period: newUsersInPeriod
       },
+      charts: {
+        messages_by_day: messagesByDay.map(item => ({
+          date: item._id,
+          total: item.count,
+          incoming: item.incoming,
+          outgoing: item.outgoing
+        }))
+      },
+      top_channels: topChannels.map(item => ({
+        id: item._id.toString(),
+        name: item.channel.name,
+        message_count: item.message_count
+      })),
+      recent_conversations: recentConversations.map(conv => ({
+        id: conv._id.toString(),
+        user_name: (conv.line_user_id as any)?.display_name || 'Unknown',
+        user_picture: (conv.line_user_id as any)?.picture_url,
+        channel_name: (conv.channel_id as any)?.name,
+        last_message: conv.last_message_preview,
+        last_message_at: conv.last_message_at,
+        status: conv.status
+      })),
+      period
     });
   } catch (error) {
-    console.error('Get dashboard stats error:', error);
-    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
+    console.error('Dashboard stats error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

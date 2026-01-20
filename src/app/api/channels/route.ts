@@ -5,7 +5,7 @@ import { verifyToken } from '@/lib/auth';
 import { getChannelInfo } from '@/lib/line';
 import mongoose from 'mongoose';
 
-// GET - ดึงรายการ Channels ทั้งหมด (รวม owner + admin permissions)
+// GET - ดึงรายการ Channels ทั้งหมด (owner + admin permissions)
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -22,42 +22,73 @@ export async function GET(request: NextRequest) {
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    // ดึง channels ที่ user เป็นเจ้าของ
-    const ownedChannels = await LineChannel.find({ user_id: userId })
-      .select('channel_name channel_id basic_id picture_url status created_at')
-      .lean();
+    // ดึง channels ที่ user เป็น owner
+    const ownedChannels = await LineChannel.find({ user_id: userId }).lean();
 
-    // ดึง channel IDs ที่ user ได้รับสิทธิ์ผ่าน admin_permissions
-    const adminPermissions = await AdminPermission.find({
+    // ดึง admin permissions
+    const adminPerms = await AdminPermission.find({
       admin_id: userId,
-      status: 'active',
-    }).select('channel_id owner_id').lean();
+      status: 'active'
+    });
 
-    // ดึง channels ที่ได้รับสิทธิ์
-    const permittedChannelIds = adminPermissions
-      .filter(p => p.channel_id)
-      .map(p => p.channel_id);
+    // รวบรวม channel IDs ที่มีสิทธิ์เข้าถึงผ่าน admin permissions
+    let additionalChannelIds: mongoose.Types.ObjectId[] = [];
+    let ownerIdsForAllChannels: mongoose.Types.ObjectId[] = [];
+
+    for (const perm of adminPerms) {
+      if (perm.channel_id) {
+        additionalChannelIds.push(perm.channel_id);
+      } else if (perm.owner_id) {
+        ownerIdsForAllChannels.push(perm.owner_id);
+      }
+    }
+
+    // ดึง specific channels
+    let additionalChannels: any[] = [];
+    if (additionalChannelIds.length > 0) {
+      additionalChannels = await LineChannel.find({
+        _id: { $in: additionalChannelIds }
+      }).lean();
+    }
+
+    // ดึง channels ของ owners ที่มีสิทธิ์ทั้งหมด
+    let ownerChannels: any[] = [];
+    if (ownerIdsForAllChannels.length > 0) {
+      ownerChannels = await LineChannel.find({
+        user_id: { $in: ownerIdsForAllChannels }
+      }).lean();
+    }
+
+    // รวม channels ทั้งหมด (ไม่ซ้ำกัน)
+    const channelMap = new Map();
     
-    // ดึง owner IDs สำหรับ permissions ที่ไม่ระบุ channel (access ทุก channel ของ owner)
-    const permittedOwnerIds = adminPermissions
-      .filter(p => !p.channel_id)
-      .map(p => p.owner_id);
+    ownedChannels.forEach(ch => {
+      channelMap.set(ch._id.toString(), { ...ch, isOwner: true });
+    });
+    
+    additionalChannels.forEach(ch => {
+      if (!channelMap.has(ch._id.toString())) {
+        channelMap.set(ch._id.toString(), { ...ch, isOwner: false });
+      }
+    });
+    
+    ownerChannels.forEach(ch => {
+      if (!channelMap.has(ch._id.toString())) {
+        channelMap.set(ch._id.toString(), { ...ch, isOwner: false });
+      }
+    });
 
-    const permittedChannels = await LineChannel.find({
-      $or: [
-        { _id: { $in: permittedChannelIds } },
-        { user_id: { $in: permittedOwnerIds } },
-      ],
-      user_id: { $ne: userId }, // ไม่รวมที่เป็นเจ้าของแล้ว
-    })
-      .select('channel_name channel_id basic_id picture_url status created_at')
-      .lean();
-
-    // รวมผลลัพธ์
-    const channels = [
-      ...ownedChannels.map(c => ({ ...c, id: c._id, is_owner: true })),
-      ...permittedChannels.map(c => ({ ...c, id: c._id, is_owner: false })),
-    ].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+    const channels = Array.from(channelMap.values()).map(ch => ({
+      id: ch._id,
+      channel_name: ch.channel_name,
+      channel_id: ch.channel_id,
+      webhook_url: ch.webhook_url,
+      basic_id: ch.basic_id,
+      picture_url: ch.picture_url,
+      status: ch.status,
+      isOwner: ch.isOwner,
+      created_at: ch.created_at
+    }));
 
     return NextResponse.json({ success: true, data: channels });
   } catch (error) {
@@ -66,7 +97,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - เพิ่ม Channel ใหม่ (เฉพาะ owner เท่านั้น)
+// POST - สร้าง Channel ใหม่
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
@@ -91,16 +122,12 @@ export async function POST(request: NextRequest) {
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
     // ตรวจสอบว่า channel_id ซ้ำหรือไม่
-    const existing = await LineChannel.findOne({
-      user_id: userId,
-      channel_id: channel_id,
-    });
-
-    if (existing) {
+    const existingChannel = await LineChannel.findOne({ channel_id, user_id: userId });
+    if (existingChannel) {
       return NextResponse.json({ success: false, message: 'Channel ID นี้มีอยู่แล้ว' }, { status: 400 });
     }
 
-    // ดึงข้อมูล Channel จาก LINE
+    // ดึงข้อมูล Channel จาก LINE API
     let channelInfo: any = {};
     try {
       channelInfo = await getChannelInfo(channel_access_token);
@@ -111,8 +138,8 @@ export async function POST(request: NextRequest) {
     // สร้าง Webhook URL
     const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/webhook/${channel_id}`;
 
-    // สร้าง channel
-    const channel = new LineChannel({
+    // สร้าง Channel ใหม่
+    const newChannel = new LineChannel({
       user_id: userId,
       channel_name,
       channel_id,
@@ -121,17 +148,18 @@ export async function POST(request: NextRequest) {
       webhook_url: webhookUrl,
       basic_id: channelInfo.basicId || null,
       picture_url: channelInfo.pictureUrl || null,
+      status: 'active'
     });
 
-    await channel.save();
+    await newChannel.save();
 
     return NextResponse.json({
       success: true,
-      message: 'เพิ่ม Channel สำเร็จ',
+      message: 'สร้าง Channel สำเร็จ',
       data: {
-        id: channel._id,
-        webhook_url: webhookUrl,
-      },
+        id: newChannel._id,
+        webhook_url: webhookUrl
+      }
     });
   } catch (error) {
     console.error('Create channel error:', error);

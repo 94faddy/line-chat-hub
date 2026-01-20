@@ -8,38 +8,10 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-// Helper function ตรวจสอบสิทธิ์เข้าถึง conversation
-async function checkConversationAccess(conversationId: string, userId: string): Promise<boolean> {
-  const userObjectId = new mongoose.Types.ObjectId(userId);
-  
-  const conversation = await Conversation.findById(conversationId).populate('channel_id', 'user_id');
-  if (!conversation) return false;
-  
-  const channel = conversation.channel_id as any;
-  if (!channel) return false;
-  
-  if (channel.user_id.equals(userObjectId)) {
-    return true;
-  }
-  
-  const adminPermission = await AdminPermission.findOne({
-    admin_id: userObjectId,
-    status: 'active',
-    $or: [
-      { channel_id: conversation.channel_id },
-      { owner_id: channel.user_id, channel_id: null },
-    ],
-  });
-  
-  return !!adminPermission;
-}
-
-// PUT - อัพเดทสถานะการสนทนา
-export async function PUT(request: NextRequest, { params }: RouteParams) {
+// PATCH - อัพเดทสถานะการสนทนา
+export async function PATCH(request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
-    
-    const { id } = await params;
     
     const token = request.cookies.get('auth_token')?.value;
     if (!token) {
@@ -51,25 +23,54 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
+    const { id } = await params;
     const body = await request.json();
     const { status } = body;
 
-    const validStatuses = ['unread', 'read', 'processing', 'completed', 'spam'];
-    if (!validStatuses.includes(status)) {
+    if (!status || !['unread', 'read', 'processing', 'completed', 'spam'].includes(status)) {
       return NextResponse.json({ success: false, message: 'สถานะไม่ถูกต้อง' }, { status: 400 });
     }
 
-    // ตรวจสอบสิทธิ์การเข้าถึง
-    const hasAccess = await checkConversationAccess(id, payload.userId);
-    if (!hasAccess) {
+    // ดึงข้อมูลการสนทนา
+    const conversation = await Conversation.findById(id).populate('channel_id');
+    if (!conversation) {
+      return NextResponse.json({ success: false, message: 'ไม่พบการสนทนา' }, { status: 404 });
+    }
+
+    const channel = conversation.channel_id as any;
+    const userId = new mongoose.Types.ObjectId(payload.userId);
+
+    // ตรวจสอบสิทธิ์
+    const isOwner = channel.user_id.equals(userId);
+    let hasPermission = isOwner;
+    
+    if (!isOwner) {
+      const adminPerm = await AdminPermission.findOne({
+        admin_id: userId,
+        status: 'active',
+        $or: [
+          { channel_id: channel._id },
+          { channel_id: null, owner_id: channel.user_id }
+        ]
+      });
+      hasPermission = !!adminPerm;
+    }
+
+    if (!hasPermission) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึงการสนทนานี้' }, { status: 403 });
     }
 
-    await Conversation.findByIdAndUpdate(id, { status });
+    // อัพเดทสถานะ
+    const updateData: any = { status };
+    if (status === 'read' || status === 'completed') {
+      updateData.unread_count = 0;
+    }
+
+    await Conversation.findByIdAndUpdate(id, updateData);
 
     return NextResponse.json({ success: true, message: 'อัพเดทสถานะสำเร็จ' });
   } catch (error) {
-    console.error('Update conversation status error:', error);
+    console.error('Update status error:', error);
     return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }

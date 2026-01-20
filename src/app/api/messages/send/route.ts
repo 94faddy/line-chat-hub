@@ -28,8 +28,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบ' }, { status: 400 });
     }
 
-    const userId = new mongoose.Types.ObjectId(payload.userId);
-
     // ดึงข้อมูลการสนทนา
     const conversation = await Conversation.findById(conversation_id)
       .populate('channel_id')
@@ -43,23 +41,25 @@ export async function POST(request: NextRequest) {
     const lineUser = conversation.line_user_id as any;
 
     // ตรวจสอบสิทธิ์
+    const userId = new mongoose.Types.ObjectId(payload.userId);
     const isOwner = channel.user_id.equals(userId);
-    let hasAccess = isOwner;
-
-    if (!hasAccess) {
-      const adminPermission = await AdminPermission.findOne({
+    
+    let hasPermission = isOwner;
+    if (!isOwner) {
+      // ตรวจสอบ admin permissions
+      const adminPerm = await AdminPermission.findOne({
         admin_id: userId,
         status: 'active',
         $or: [
           { channel_id: channel._id },
-          { owner_id: channel.user_id, channel_id: null },
-        ],
+          { channel_id: null, owner_id: channel.user_id }
+        ]
       });
-      hasAccess = !!adminPermission;
+      hasPermission = !!adminPerm;
     }
 
-    if (!hasAccess) {
-      return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์ส่งข้อความ' }, { status: 403 });
+    if (!hasPermission) {
+      return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึงการสนทนานี้' }, { status: 403 });
     }
 
     // สร้าง LINE message object
@@ -78,18 +78,31 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, message: 'กรุณาระบุ URL รูปภาพ' }, { status: 400 });
       }
       
-      if (!media_url.startsWith('https://')) {
+      // แปลง relative URL เป็น full URL
+      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
+      let fullMediaUrl = media_url;
+      
+      if (media_url.startsWith('/uploads/') || media_url.startsWith('/api/media/')) {
+        fullMediaUrl = `${baseUrl}${media_url}`;
+      }
+      
+      if (!fullMediaUrl.startsWith('https://')) {
         return NextResponse.json({ 
           success: false, 
           message: 'URL รูปภาพต้องเป็น HTTPS เท่านั้น' 
         }, { status: 400 });
       }
 
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
-      if (media_url.startsWith(baseUrl) && media_url.includes('/uploads/')) {
-        processedMediaUrl = media_url.replace('/uploads/', '/api/media/');
+      // แปลง /uploads/ เป็น /api/media/ สำหรับ LINE
+      if (fullMediaUrl.includes('/uploads/')) {
+        processedMediaUrl = fullMediaUrl.replace('/uploads/', '/api/media/');
+      } else {
+        processedMediaUrl = fullMediaUrl;
       }
 
+      console.log('📸 [Send Image] Original URL:', media_url);
+      console.log('📸 [Send Image] Processed URL for LINE:', processedMediaUrl);
+      
       lineMessage = {
         type: 'image',
         originalContentUrl: processedMediaUrl,
@@ -101,9 +114,18 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, message: 'กรุณาระบุ URL วิดีโอ' }, { status: 400 });
       }
       
+      // แปลง relative URL เป็น full URL
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
-      if (media_url.startsWith(baseUrl) && media_url.includes('/uploads/')) {
-        processedMediaUrl = media_url.replace('/uploads/', '/api/media/');
+      let fullMediaUrl = media_url;
+      
+      if (media_url.startsWith('/uploads/') || media_url.startsWith('/api/media/')) {
+        fullMediaUrl = `${baseUrl}${media_url}`;
+      }
+      
+      if (fullMediaUrl.includes('/uploads/')) {
+        processedMediaUrl = fullMediaUrl.replace('/uploads/', '/api/media/');
+      } else {
+        processedMediaUrl = fullMediaUrl;
       }
       
       const previewUrl = processedMediaUrl.replace(/\.[^/.]+$/, '.jpg');
@@ -119,9 +141,18 @@ export async function POST(request: NextRequest) {
         return NextResponse.json({ success: false, message: 'กรุณาระบุ URL เสียง' }, { status: 400 });
       }
       
+      // แปลง relative URL เป็น full URL
       const baseUrl = process.env.NEXT_PUBLIC_APP_URL || '';
-      if (media_url.startsWith(baseUrl) && media_url.includes('/uploads/')) {
-        processedMediaUrl = media_url.replace('/uploads/', '/api/media/');
+      let fullMediaUrl = media_url;
+      
+      if (media_url.startsWith('/uploads/') || media_url.startsWith('/api/media/')) {
+        fullMediaUrl = `${baseUrl}${media_url}`;
+      }
+      
+      if (fullMediaUrl.includes('/uploads/')) {
+        processedMediaUrl = fullMediaUrl.replace('/uploads/', '/api/media/');
+      } else {
+        processedMediaUrl = fullMediaUrl;
       }
       
       lineMessage = {
@@ -134,6 +165,8 @@ export async function POST(request: NextRequest) {
       if (!package_id || !sticker_id) {
         return NextResponse.json({ success: false, message: 'กรุณาระบุ package_id และ sticker_id' }, { status: 400 });
       }
+      
+      console.log('🎉 [Send Sticker] Package:', package_id, 'Sticker:', sticker_id);
       
       lineMessage = {
         type: 'sticker',
@@ -151,10 +184,16 @@ export async function POST(request: NextRequest) {
       await pushMessage(channel.channel_access_token, lineUser.line_user_id, lineMessage);
       console.log('✅ [LINE Push] Message sent successfully');
     } catch (lineError: any) {
-      console.error('❌ [LINE Push] Error:', lineError.response?.data || lineError.message);
+      console.error('❌ [LINE Push] Error:', lineError.response?.data || lineError.message || lineError);
       
       const errorData = lineError.response?.data;
-      let errorMessage = errorData?.message || lineError.message || 'Unknown error';
+      let errorMessage = 'Unknown error';
+      
+      if (errorData) {
+        errorMessage = errorData.message || JSON.stringify(errorData);
+      } else {
+        errorMessage = lineError.message;
+      }
       
       return NextResponse.json({ 
         success: false, 
@@ -162,11 +201,10 @@ export async function POST(request: NextRequest) {
       }, { status: 500 });
     }
 
-    // ใช้เวลา Thailand timezone
     const thaiTime = new Date();
 
-    // บันทึกข้อความ
-    const message = new Message({
+    // บันทึกข้อความลงฐานข้อมูล
+    const newMessage = new Message({
       conversation_id: conversation._id,
       channel_id: channel._id,
       line_user_id: lineUser._id,
@@ -178,20 +216,21 @@ export async function POST(request: NextRequest) {
       package_id: package_id || null,
       sent_by: userId,
       source_type: 'manual',
-      created_at: thaiTime,
+      created_at: thaiTime
     });
 
-    await message.save();
+    await newMessage.save();
 
     // อัพเดทการสนทนา
     const preview = messagePreview || (message_type === 'text' ? content : `[${message_type}]`);
-    conversation.last_message_preview = preview.substring(0, 100);
-    conversation.last_message_at = thaiTime;
-    await conversation.save();
+    await Conversation.findByIdAndUpdate(conversation._id, {
+      last_message_preview: preview.substring(0, 100),
+      last_message_at: thaiTime
+    });
 
     // ส่ง realtime notification
-    const newMessage = {
-      id: message._id,
+    const messageData = {
+      id: newMessage._id,
       direction: 'outgoing',
       message_type,
       content: content || null,
@@ -202,12 +241,12 @@ export async function POST(request: NextRequest) {
       created_at: thaiTime
     };
 
-    await notifyNewMessage(channel._id.toString(), conversation._id.toString(), newMessage);
+    await notifyNewMessage(channel._id.toString(), conversation._id.toString(), messageData);
 
     return NextResponse.json({
       success: true,
       message: 'ส่งข้อความสำเร็จ',
-      data: { id: message._id }
+      data: { id: newMessage._id }
     });
   } catch (error: any) {
     console.error('Send message error:', error);

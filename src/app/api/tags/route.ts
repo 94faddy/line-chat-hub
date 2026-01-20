@@ -1,31 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import { Tag, AdminPermission, Conversation } from '@/models';
+import { Tag } from '@/models';
 import { verifyToken } from '@/lib/auth';
 import mongoose from 'mongoose';
 
-// Helper: ดึง owner IDs ที่ user มีสิทธิ์เข้าถึง
-async function getAccessibleOwnerIds(userId: string): Promise<string[]> {
-  const ownerIds = [userId];
-  
-  const permissions = await AdminPermission.find({
-    admin_id: userId,
-    status: 'active',
-  }).select('owner_id').lean();
-  
-  permissions.forEach((p: any) => {
-    if (p.owner_id) {
-      const ownerId = p.owner_id.toString();
-      if (!ownerIds.includes(ownerId)) {
-        ownerIds.push(ownerId);
-      }
-    }
-  });
-  
-  return ownerIds;
-}
-
-// GET - List all tags (รวม owner + admin permissions)
+// GET - ดึงรายการ Tags ทั้งหมด
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -40,33 +19,25 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
-    // ดึง owner IDs ที่มีสิทธิ์เข้าถึง
-    const ownerIds = await getAccessibleOwnerIds(payload.userId);
+    const userId = new mongoose.Types.ObjectId(payload.userId);
+    const tags = await Tag.find({ user_id: userId }).sort({ name: 1 }).lean();
 
-    const tags = await Tag.find({
-      user_id: { $in: ownerIds },
-    }).sort({ name: 1 }).lean();
+    const formattedTags = tags.map(tag => ({
+      id: tag._id,
+      name: tag.name,
+      color: tag.color,
+      description: tag.description,
+      created_at: tag.created_at
+    }));
 
-    // นับ conversations_count สำหรับแต่ละ tag
-    const tagsWithCount = await Promise.all(
-      tags.map(async (tag: any) => {
-        const count = await Conversation.countDocuments({ tags: tag._id });
-        return {
-          ...tag,
-          id: tag._id,
-          conversations_count: count,
-        };
-      })
-    );
-
-    return NextResponse.json({ success: true, data: tagsWithCount });
-  } catch (error: any) {
-    console.error('Error fetching tags:', error);
-    return NextResponse.json({ success: false, message: error.message }, { status: 500 });
+    return NextResponse.json({ success: true, data: formattedTags });
+  } catch (error) {
+    console.error('Get tags error:', error);
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }
 
-// POST - Create new tag (สร้างในชื่อ owner ของตัวเอง)
+// POST - สร้าง Tag ใหม่
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
@@ -85,38 +56,33 @@ export async function POST(request: NextRequest) {
     const { name, color, description } = body;
 
     if (!name) {
-      return NextResponse.json({ success: false, message: 'กรุณาระบุชื่อ Tag' }, { status: 400 });
+      return NextResponse.json({ success: false, message: 'กรุณากรอกชื่อ Tag' }, { status: 400 });
     }
 
-    // ตรวจสอบชื่อซ้ำ (ของ user นี้)
-    const existing = await Tag.findOne({
-      name,
-      user_id: payload.userId,
-    });
+    const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    if (existing) {
+    // ตรวจสอบว่าชื่อซ้ำหรือไม่
+    const existingTag = await Tag.findOne({ user_id: userId, name });
+    if (existingTag) {
       return NextResponse.json({ success: false, message: 'ชื่อ Tag นี้มีอยู่แล้ว' }, { status: 400 });
     }
 
-    const tag = new Tag({
-      user_id: payload.userId,
+    const newTag = new Tag({
+      user_id: userId,
       name,
       color: color || '#06C755',
-      description: description || null,
+      description: description || null
     });
 
-    await tag.save();
+    await newTag.save();
 
     return NextResponse.json({
       success: true,
-      data: {
-        ...tag.toJSON(),
-        id: tag._id,
-        conversations_count: 0,
-      },
+      message: 'สร้าง Tag สำเร็จ',
+      data: { id: newTag._id }
     });
-  } catch (error: any) {
-    console.error('Error creating tag:', error);
-    return NextResponse.json({ success: false, message: error.message }, { status: 500 });
+  } catch (error) {
+    console.error('Create tag error:', error);
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }

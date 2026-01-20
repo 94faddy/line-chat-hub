@@ -1,79 +1,116 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { User } from '@/models';
-import { verifyToken, getTokenFromCookies } from '@/lib/auth';
-import { writeFile, mkdir } from 'fs/promises';
+import { verifyTokenFromRequest } from '@/lib/auth';
+import { writeFile, mkdir, unlink } from 'fs/promises';
 import path from 'path';
 import { existsSync } from 'fs';
 
 // POST - Upload avatar
 export async function POST(request: NextRequest) {
   try {
-    await connectDB();
-    
-    const token = getTokenFromCookies(request);
-    if (!token) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    const user = verifyTokenFromRequest(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const decoded = verifyToken(token);
-    if (!decoded) {
-      return NextResponse.json({ success: false, error: 'Invalid token' }, { status: 401 });
-    }
+    await connectDB();
 
     const formData = await request.formData();
     const file = formData.get('avatar') as File;
 
     if (!file) {
-      return NextResponse.json(
-        { success: false, error: 'No file uploaded' },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: 'No file uploaded' }, { status: 400 });
     }
 
     // Validate file type
-    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
-    if (!validTypes.includes(file.type)) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid file type. Only JPEG, PNG, GIF, WEBP are allowed' },
-        { status: 400 }
-      );
+    const allowedTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      return NextResponse.json({ error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed' }, { status: 400 });
     }
 
-    // Validate file size (5MB)
-    if (file.size > 5 * 1024 * 1024) {
-      return NextResponse.json(
-        { success: false, error: 'File size must be less than 5MB' },
-        { status: 400 }
-      );
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024;
+    if (file.size > maxSize) {
+      return NextResponse.json({ error: 'File too large. Maximum size is 5MB' }, { status: 400 });
     }
 
-    // Create uploads directory if it doesn't exist
-    const uploadsDir = path.join(process.cwd(), 'public', 'uploads', 'avatars');
-    if (!existsSync(uploadsDir)) {
-      await mkdir(uploadsDir, { recursive: true });
+    // Create uploads directory if not exists
+    const uploadDir = path.join(process.cwd(), 'public', 'uploads', 'avatars');
+    if (!existsSync(uploadDir)) {
+      await mkdir(uploadDir, { recursive: true });
     }
 
     // Generate unique filename
-    const ext = file.name.split('.').pop();
-    const filename = `avatar_${decoded.userId}_${Date.now()}.${ext}`;
-    const filepath = path.join(uploadsDir, filename);
+    const ext = path.extname(file.name) || '.jpg';
+    const filename = `${user.id}_${Date.now()}${ext}`;
+    const filepath = path.join(uploadDir, filename);
 
-    // Write file
+    // Save file
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
     await writeFile(filepath, buffer);
 
+    // Get old avatar to delete
+    const oldUser = await User.findById(user.id).lean();
+    const oldAvatar = oldUser?.avatar;
+
     // Update user avatar in database
     const avatarUrl = `/uploads/avatars/${filename}`;
-    await User.findByIdAndUpdate(decoded.userId, { avatar: avatarUrl });
+    await User.findByIdAndUpdate(user.id, { avatar: avatarUrl });
 
-    return NextResponse.json({ 
-      success: true, 
-      data: { avatar: avatarUrl } 
+    // Delete old avatar file if exists
+    if (oldAvatar && oldAvatar.startsWith('/uploads/avatars/')) {
+      const oldPath = path.join(process.cwd(), 'public', oldAvatar);
+      if (existsSync(oldPath)) {
+        try {
+          await unlink(oldPath);
+        } catch (e) {
+          console.error('Failed to delete old avatar:', e);
+        }
+      }
+    }
+
+    return NextResponse.json({
+      message: 'Avatar uploaded successfully',
+      avatar: avatarUrl
     });
-  } catch (error: any) {
-    console.error('Error uploading avatar:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  } catch (error) {
+    console.error('Upload avatar error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+  }
+}
+
+// DELETE - Remove avatar
+export async function DELETE(request: NextRequest) {
+  try {
+    const user = verifyTokenFromRequest(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    await connectDB();
+
+    // Get current avatar
+    const currentUser = await User.findById(user.id).lean();
+    if (!currentUser?.avatar) {
+      return NextResponse.json({ error: 'No avatar to delete' }, { status: 400 });
+    }
+
+    // Delete avatar file
+    if (currentUser.avatar.startsWith('/uploads/avatars/')) {
+      const avatarPath = path.join(process.cwd(), 'public', currentUser.avatar);
+      if (existsSync(avatarPath)) {
+        await unlink(avatarPath);
+      }
+    }
+
+    // Update database
+    await User.findByIdAndUpdate(user.id, { $unset: { avatar: 1 } });
+
+    return NextResponse.json({ message: 'Avatar deleted successfully' });
+  } catch (error) {
+    console.error('Delete avatar error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

@@ -28,27 +28,30 @@ interface Settings {
   };
 }
 
+// Default settings - ใช้เป็น fallback
+const defaultSettings: Settings = {
+  notifications: {
+    email_new_message: true,
+    email_daily_report: false,
+    browser_notifications: true,
+    sound_enabled: true
+  },
+  chat: {
+    auto_assign: false,
+    auto_reply_enabled: true,
+    working_hours_only: false,
+    working_hours_start: '09:00',
+    working_hours_end: '18:00'
+  },
+  general: {
+    timezone: 'Asia/Bangkok',
+    language: 'th',
+    date_format: 'DD/MM/YYYY'
+  }
+};
+
 export default function SettingsPage() {
-  const [settings, setSettings] = useState<Settings>({
-    notifications: {
-      email_new_message: true,
-      email_daily_report: false,
-      browser_notifications: true,
-      sound_enabled: true
-    },
-    chat: {
-      auto_assign: false,
-      auto_reply_enabled: true,
-      working_hours_only: false,
-      working_hours_start: '09:00',
-      working_hours_end: '18:00'
-    },
-    general: {
-      timezone: 'Asia/Bangkok',
-      language: 'th',
-      date_format: 'DD/MM/YYYY'
-    }
-  });
+  const [settings, setSettings] = useState<Settings>(defaultSettings);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [activeTab, setActiveTab] = useState('notifications');
@@ -68,7 +71,21 @@ export default function SettingsPage() {
       const res = await fetch('/api/settings');
       const data = await res.json();
       if (data.success && data.data) {
-        setSettings(data.data);
+        // Merge กับ defaultSettings เพื่อป้องกัน undefined
+        setSettings({
+          notifications: {
+            ...defaultSettings.notifications,
+            ...(data.data.notifications || {})
+          },
+          chat: {
+            ...defaultSettings.chat,
+            ...(data.data.chat || {})
+          },
+          general: {
+            ...defaultSettings.general,
+            ...(data.data.general || {})
+          }
+        });
       }
     } catch (error) {
       console.error('Error fetching settings:', error);
@@ -83,7 +100,7 @@ export default function SettingsPage() {
       const res = await fetch('/api/settings/bot-token');
       const data = await res.json();
       if (data.success) {
-        setBotToken(data.data.bot_api_token);
+        setBotToken(data.data?.bot_api_token || null);
       }
     } catch (error) {
       console.error('Error fetching bot token:', error);
@@ -111,7 +128,7 @@ export default function SettingsPage() {
       const res = await fetch('/api/settings/bot-token', { method: 'POST' });
       const data = await res.json();
       if (data.success) {
-        setBotToken(data.data.bot_api_token);
+        setBotToken(data.data?.bot_api_token || null);
         Swal.fire({
           icon: 'success',
           title: 'สร้าง Token สำเร็จ',
@@ -306,7 +323,7 @@ export default function SettingsPage() {
                   <ToggleSetting
                     label="แจ้งเตือนทางอีเมลเมื่อมีข้อความใหม่"
                     description="รับอีเมลเมื่อมีข้อความจากลูกค้า"
-                    checked={settings.notifications.email_new_message}
+                    checked={settings.notifications?.email_new_message ?? false}
                     onChange={(checked) => setSettings({
                       ...settings,
                       notifications: { ...settings.notifications, email_new_message: checked }
@@ -316,7 +333,7 @@ export default function SettingsPage() {
                   <ToggleSetting
                     label="รายงานสรุปประจำวัน"
                     description="รับอีเมลสรุปการสนทนาประจำวัน"
-                    checked={settings.notifications.email_daily_report}
+                    checked={settings.notifications?.email_daily_report ?? false}
                     onChange={(checked) => setSettings({
                       ...settings,
                       notifications: { ...settings.notifications, email_daily_report: checked }
@@ -326,7 +343,7 @@ export default function SettingsPage() {
                   <ToggleSetting
                     label="การแจ้งเตือนบน Browser"
                     description="แสดงการแจ้งเตือนบน Browser เมื่อมีข้อความใหม่"
-                    checked={settings.notifications.browser_notifications}
+                    checked={settings.notifications?.browser_notifications ?? false}
                     onChange={(checked) => setSettings({
                       ...settings,
                       notifications: { ...settings.notifications, browser_notifications: checked }
@@ -336,7 +353,7 @@ export default function SettingsPage() {
                   <ToggleSetting
                     label="เสียงแจ้งเตือน"
                     description="เปิดเสียงเมื่อมีข้อความใหม่"
-                    checked={settings.notifications.sound_enabled}
+                    checked={settings.notifications?.sound_enabled ?? false}
                     onChange={(checked) => setSettings({
                       ...settings,
                       notifications: { ...settings.notifications, sound_enabled: checked }
@@ -358,7 +375,7 @@ export default function SettingsPage() {
                   <ToggleSetting
                     label="มอบหมายอัตโนมัติ"
                     description="มอบหมายการสนทนาใหม่ให้ทีมงานโดยอัตโนมัติ"
-                    checked={settings.chat.auto_assign}
+                    checked={settings.chat?.auto_assign ?? false}
                     onChange={(checked) => setSettings({
                       ...settings,
                       chat: { ...settings.chat, auto_assign: checked }
@@ -368,7 +385,7 @@ export default function SettingsPage() {
                   <ToggleSetting
                     label="เปิดใช้งาน Auto Reply"
                     description="ตอบกลับข้อความอัตโนมัติตาม keyword"
-                    checked={settings.chat.auto_reply_enabled}
+                    checked={settings.chat?.auto_reply_enabled ?? false}
                     onChange={(checked) => setSettings({
                       ...settings,
                       chat: { ...settings.chat, auto_reply_enabled: checked }
@@ -378,14 +395,14 @@ export default function SettingsPage() {
                   <ToggleSetting
                     label="จำกัดเวลาทำการ"
                     description="Auto Reply ทำงานเฉพาะในเวลาทำการ"
-                    checked={settings.chat.working_hours_only}
+                    checked={settings.chat?.working_hours_only ?? false}
                     onChange={(checked) => setSettings({
                       ...settings,
                       chat: { ...settings.chat, working_hours_only: checked }
                     })}
                   />
 
-                  {settings.chat.working_hours_only && (
+                  {settings.chat?.working_hours_only && (
                     <div className="ml-6 p-4 bg-gray-50 rounded-lg">
                       <label className="block text-sm font-medium text-gray-700 mb-2">
                         เวลาทำการ
@@ -393,7 +410,7 @@ export default function SettingsPage() {
                       <div className="flex items-center gap-4">
                         <input
                           type="time"
-                          value={settings.chat.working_hours_start}
+                          value={settings.chat?.working_hours_start ?? '09:00'}
                           onChange={(e) => setSettings({
                             ...settings,
                             chat: { ...settings.chat, working_hours_start: e.target.value }
@@ -403,7 +420,7 @@ export default function SettingsPage() {
                         <span className="text-gray-500">ถึง</span>
                         <input
                           type="time"
-                          value={settings.chat.working_hours_end}
+                          value={settings.chat?.working_hours_end ?? '18:00'}
                           onChange={(e) => setSettings({
                             ...settings,
                             chat: { ...settings.chat, working_hours_end: e.target.value }
@@ -540,7 +557,7 @@ export default function SettingsPage() {
                       เขตเวลา
                     </label>
                     <select
-                      value={settings.general.timezone}
+                      value={settings.general?.timezone ?? 'Asia/Bangkok'}
                       onChange={(e) => setSettings({
                         ...settings,
                         general: { ...settings.general, timezone: e.target.value }
@@ -559,7 +576,7 @@ export default function SettingsPage() {
                       ภาษา
                     </label>
                     <select
-                      value={settings.general.language}
+                      value={settings.general?.language ?? 'th'}
                       onChange={(e) => setSettings({
                         ...settings,
                         general: { ...settings.general, language: e.target.value }
@@ -576,7 +593,7 @@ export default function SettingsPage() {
                       รูปแบบวันที่
                     </label>
                     <select
-                      value={settings.general.date_format}
+                      value={settings.general?.date_format ?? 'DD/MM/YYYY'}
                       onChange={(e) => setSettings({
                         ...settings,
                         general: { ...settings.general, date_format: e.target.value }

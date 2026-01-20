@@ -1,30 +1,74 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import { QuickReply, AdminPermission, LineChannel } from '@/models';
+import { QuickReply, LineChannel, AdminPermission } from '@/models';
 import { verifyToken } from '@/lib/auth';
+import mongoose from 'mongoose';
 
-// Helper: ดึง owner IDs ที่ user มีสิทธิ์เข้าถึง
-async function getAccessibleOwnerIds(userId: string): Promise<string[]> {
-  const ownerIds = [userId];
-  
-  const permissions = await AdminPermission.find({
+// Helper: ดึง channel IDs ที่ user มีสิทธิ์เข้าถึง
+async function getAccessibleChannelIds(userId: mongoose.Types.ObjectId): Promise<mongoose.Types.ObjectId[]> {
+  // 1. Channels ที่ user เป็น owner
+  const ownedChannels = await LineChannel.find({ user_id: userId }).select('_id').lean();
+  const ownedChannelIds = ownedChannels.map(ch => ch._id);
+
+  // 2. Channels ที่ user ถูก invite และ status = active
+  const permissions = await AdminPermission.find({ 
+    admin_id: userId, 
+    status: 'active',
+    channel_id: { $ne: null }
+  }).select('channel_id').lean();
+  const permittedChannelIds = permissions.map(p => p.channel_id!);
+
+  // 3. Channels ที่ user ถูก invite แบบ "ทุก channel" (channel_id = null)
+  const allChannelPermissions = await AdminPermission.find({
     admin_id: userId,
     status: 'active',
+    channel_id: null
   }).select('owner_id').lean();
   
-  permissions.forEach((p: any) => {
-    if (p.owner_id) {
-      const ownerId = p.owner_id.toString();
-      if (!ownerIds.includes(ownerId)) {
-        ownerIds.push(ownerId);
-      }
-    }
-  });
+  // ดึง channels ของ owners เหล่านั้น
+  const ownerIds = allChannelPermissions.map(p => p.owner_id);
+  const ownerChannels = await LineChannel.find({ user_id: { $in: ownerIds } }).select('_id').lean();
+  const ownerChannelIds = ownerChannels.map(ch => ch._id);
+
+  // รวมทั้งหมด
+  const allChannelIds = [...ownedChannelIds, ...permittedChannelIds, ...ownerChannelIds];
   
-  return ownerIds;
+  // ลบ duplicates
+  const uniqueIds = [...new Map(allChannelIds.map(id => [id.toString(), id])).values()];
+  
+  return uniqueIds;
 }
 
-// GET - ดึงรายการข้อความตอบกลับ (รวม owner + admin permissions)
+// Helper: ตรวจสอบว่า user มีสิทธิ์เข้าถึง channel หรือไม่
+async function hasChannelAccess(userId: mongoose.Types.ObjectId, channelId: mongoose.Types.ObjectId): Promise<boolean> {
+  // 1. เป็น owner ของ channel
+  const isOwner = await LineChannel.exists({ _id: channelId, user_id: userId });
+  if (isOwner) return true;
+
+  // 2. ถูก invite เข้า channel นี้โดยเฉพาะ
+  const hasDirectPermission = await AdminPermission.exists({
+    admin_id: userId,
+    channel_id: channelId,
+    status: 'active'
+  });
+  if (hasDirectPermission) return true;
+
+  // 3. ถูก invite แบบ "ทุก channel" ของ owner
+  const channel = await LineChannel.findById(channelId).select('user_id').lean();
+  if (channel) {
+    const hasAllChannelPermission = await AdminPermission.exists({
+      admin_id: userId,
+      owner_id: channel.user_id,
+      channel_id: null,
+      status: 'active'
+    });
+    if (hasAllChannelPermission) return true;
+  }
+
+  return false;
+}
+
+// GET - ดึงรายการ Quick Replies ของ channels ที่ user มีสิทธิ์
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -39,34 +83,44 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
-    const { searchParams } = new URL(request.url);
-    const channelId = searchParams.get('channel_id');
+    const userId = new mongoose.Types.ObjectId(payload.userId);
+    
+    // ดึง channel IDs ที่ user มีสิทธิ์
+    const accessibleChannelIds = await getAccessibleChannelIds(userId);
 
-    // ดึง owner IDs ที่มีสิทธิ์เข้าถึง
-    const ownerIds = await getAccessibleOwnerIds(payload.userId);
-
-    const query: any = {
-      user_id: { $in: ownerIds },
-      is_active: true,
-    };
-
-    // ดึงทั้งที่เป็น global (channel_id = null) และของ channel ที่ระบุ
-    if (channelId) {
-      query.$or = [
-        { channel_id: null },
-        { channel_id: channelId },
-      ];
+    if (accessibleChannelIds.length === 0) {
+      return NextResponse.json({ success: true, data: [] });
     }
 
-    const replies = await QuickReply.find(query)
-      .populate('channel_id', 'channel_name')
-      .sort({ use_count: -1, created_at: -1 })
+    // ดึง quick replies ของ channels เหล่านั้น
+    const quickReplies = await QuickReply.find({ 
+      channel_id: { $in: accessibleChannelIds },
+      is_active: true 
+    })
+      .sort({ channel_id: 1, use_count: -1 })
       .lean();
 
-    const formattedReplies = replies.map((r: any) => ({
-      ...r,
-      id: r._id,
-      channel_name: r.channel_id?.channel_name || null,
+    // ดึง channel names
+    const channels = await LineChannel.find({ _id: { $in: accessibleChannelIds } })
+      .select('_id channel_name')
+      .lean();
+    
+    const channelMap = new Map(channels.map(ch => [ch._id.toString(), ch.channel_name]));
+
+    const formattedReplies = quickReplies.map(qr => ({
+      id: qr._id,
+      title: qr.title,
+      shortcut: qr.shortcut,
+      message_type: qr.message_type,
+      content: qr.content,
+      flex_content: qr.flex_content,
+      media_url: qr.media_url,
+      channel_id: qr.channel_id,
+      channel_name: channelMap.get(qr.channel_id.toString()) || null,
+      is_active: qr.is_active,
+      use_count: qr.use_count,
+      created_by: qr.created_by,
+      created_at: qr.created_at
     }));
 
     return NextResponse.json({ success: true, data: formattedReplies });
@@ -76,7 +130,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST - สร้างข้อความตอบกลับใหม่ (สร้างในชื่อตัวเอง)
+// POST - สร้าง Quick Reply ใหม่
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
@@ -94,41 +148,50 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { title, shortcut, message_type, content, flex_content, media_url, channel_id } = body;
 
+    // ต้องระบุ channel_id
+    if (!channel_id) {
+      return NextResponse.json({ success: false, message: 'กรุณาเลือก LINE Channel' }, { status: 400 });
+    }
+
     if (!title || !content) {
-      return NextResponse.json({ success: false, message: 'กรุณากรอกชื่อและข้อความ' }, { status: 400 });
+      return NextResponse.json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบ' }, { status: 400 });
     }
 
-    // ถ้าระบุ channel_id ให้ตรวจสอบว่ามีสิทธิ์หรือไม่
-    if (channel_id) {
-      const ownerIds = await getAccessibleOwnerIds(payload.userId);
-      
-      const channel = await LineChannel.findOne({
-        _id: channel_id,
-        user_id: { $in: ownerIds },
-      });
-      
-      if (!channel) {
-        return NextResponse.json({ success: false, message: 'ไม่พบ Channel หรือไม่มีสิทธิ์' }, { status: 404 });
-      }
+    const userId = new mongoose.Types.ObjectId(payload.userId);
+    const channelObjectId = new mongoose.Types.ObjectId(channel_id);
+
+    // ตรวจสอบว่า user มีสิทธิ์เข้าถึง channel นี้หรือไม่
+    const hasAccess = await hasChannelAccess(userId, channelObjectId);
+    if (!hasAccess) {
+      return NextResponse.json({ success: false, message: 'คุณไม่มีสิทธิ์เข้าถึง Channel นี้' }, { status: 403 });
     }
 
-    const quickReply = new QuickReply({
-      user_id: payload.userId,
-      channel_id: channel_id || null,
+    const newQuickReply = new QuickReply({
+      channel_id: channelObjectId,
+      created_by: userId,
       title,
       shortcut: shortcut || null,
       message_type: message_type || 'text',
       content,
       flex_content: flex_content || null,
       media_url: media_url || null,
+      is_active: true,
+      use_count: 0
     });
 
-    await quickReply.save();
+    await newQuickReply.save();
+
+    // ดึง channel name สำหรับ response
+    const channel = await LineChannel.findById(channelObjectId).select('channel_name').lean();
 
     return NextResponse.json({
       success: true,
       message: 'สร้างข้อความตอบกลับสำเร็จ',
-      data: { id: quickReply._id },
+      data: { 
+        id: newQuickReply._id,
+        channel_id: channelObjectId,
+        channel_name: channel?.channel_name
+      }
     });
   } catch (error) {
     console.error('Create quick reply error:', error);

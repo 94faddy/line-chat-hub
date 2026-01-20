@@ -2,47 +2,35 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { User } from '@/models';
 
-export async function POST(request: NextRequest) {
+export async function GET(request: NextRequest) {
   try {
     await connectDB();
     
-    const { token } = await request.json();
+    const { searchParams } = new URL(request.url);
+    const token = searchParams.get('token');
 
     if (!token) {
-      return NextResponse.json(
-        { success: false, message: 'Token ไม่ถูกต้อง' },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 400 });
     }
 
-    // ค้นหา user จาก token
-    const user = await User.findOne({
-      verification_token: token,
-      status: 'pending',
-    });
-
+    const user = await User.findOne({ verification_token: token });
     if (!user) {
-      return NextResponse.json(
-        { success: false, message: 'ลิงก์ไม่ถูกต้องหรือหมดอายุแล้ว' },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้องหรือหมดอายุ' }, { status: 400 });
     }
 
     // อัพเดทสถานะ
-    user.status = 'active';
-    user.email_verified_at = new Date();
-    user.verification_token = undefined;
-    await user.save();
+    await User.findByIdAndUpdate(user._id, {
+      status: 'active',
+      verification_token: null,
+      email_verified_at: new Date()
+    });
 
     return NextResponse.json({
       success: true,
-      message: 'ยืนยันอีเมลสำเร็จ',
+      message: 'ยืนยันอีเมลสำเร็จ'
     });
   } catch (error) {
     console.error('Verify error:', error);
-    return NextResponse.json(
-      { success: false, message: 'เกิดข้อผิดพลาด' },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }

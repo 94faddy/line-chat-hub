@@ -63,6 +63,7 @@ export function sendEventToUser(userId: string, eventType: string, data: any) {
     
     userClients.forEach((controller) => {
       try {
+        // ส่งแบบไม่มี event name เพื่อให้ onmessage จับได้
         controller.enqueue(encoder.encode(`data: ${eventData}\n\n`));
         console.log(`✅ Event sent successfully to userId=${userId}: ${eventType}`);
       } catch (error) {

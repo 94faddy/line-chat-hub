@@ -1,12 +1,22 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
-export async function POST() {
-  const response = NextResponse.json({
-    success: true,
-    message: 'ออกจากระบบสำเร็จ',
-  });
+export async function POST(request: NextRequest) {
+  try {
+    const response = NextResponse.json({
+      success: true,
+      message: 'ออกจากระบบสำเร็จ'
+    });
 
-  response.headers.set('Set-Cookie', 'auth_token=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0');
+    response.cookies.set('auth_token', '', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 0
+    });
 
-  return response;
+    return response;
+  } catch (error) {
+    console.error('Logout error:', error);
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
+  }
 }

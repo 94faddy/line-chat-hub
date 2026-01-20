@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import { Tag, AdminPermission, Conversation } from '@/models';
+import { Tag } from '@/models';
 import { verifyToken } from '@/lib/auth';
 import mongoose from 'mongoose';
 
@@ -8,38 +8,7 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-// Helper: ตรวจสอบสิทธิ์เข้าถึง tag
-async function checkTagAccess(tagId: string, userId: string): Promise<{ hasAccess: boolean; isOwner: boolean }> {
-  // เช็คว่าเป็น owner ของ tag
-  const tag = await Tag.findOne({
-    _id: tagId,
-    user_id: userId,
-  });
-  
-  if (tag) {
-    return { hasAccess: true, isOwner: true };
-  }
-  
-  // เช็คว่าเป็น admin ที่มีสิทธิ์เข้าถึง owner ของ tag นี้
-  const targetTag = await Tag.findById(tagId);
-  if (!targetTag) {
-    return { hasAccess: false, isOwner: false };
-  }
-  
-  const adminPermission = await AdminPermission.findOne({
-    admin_id: userId,
-    owner_id: targetTag.user_id,
-    status: 'active',
-  });
-  
-  if (adminPermission) {
-    return { hasAccess: true, isOwner: false };
-  }
-  
-  return { hasAccess: false, isOwner: false };
-}
-
-// GET - Get single tag
+// GET - ดึงข้อมูล Tag
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
@@ -55,36 +24,29 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     const { id } = await params;
+    const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    // ตรวจสอบสิทธิ์
-    const { hasAccess } = await checkTagAccess(id, payload.userId);
-    if (!hasAccess) {
-      return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึง Tag นี้' }, { status: 403 });
-    }
-
-    const tag = await Tag.findById(id).lean();
-
+    const tag = await Tag.findOne({ _id: id, user_id: userId }).lean();
     if (!tag) {
       return NextResponse.json({ success: false, message: 'ไม่พบ Tag' }, { status: 404 });
     }
 
-    const conversationsCount = await Conversation.countDocuments({ tags: id });
-
     return NextResponse.json({
       success: true,
       data: {
-        ...tag,
         id: tag._id,
-        conversations_count: conversationsCount,
-      },
+        name: tag.name,
+        color: tag.color,
+        description: tag.description
+      }
     });
-  } catch (error: any) {
-    console.error('Error fetching tag:', error);
-    return NextResponse.json({ success: false, message: error.message }, { status: 500 });
+  } catch (error) {
+    console.error('Get tag error:', error);
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }
 
-// PUT - Update tag (เฉพาะ owner)
+// PUT - อัพเดท Tag
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
@@ -101,60 +63,31 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     const { id } = await params;
     const body = await request.json();
+    const { name, color, description } = body;
 
-    // ตรวจสอบว่าเป็น owner
-    const { isOwner } = await checkTagAccess(id, payload.userId);
-    if (!isOwner) {
-      return NextResponse.json({ success: false, message: 'เฉพาะเจ้าของเท่านั้นที่แก้ไขได้' }, { status: 403 });
+    const userId = new mongoose.Types.ObjectId(payload.userId);
+
+    const tag = await Tag.findOne({ _id: id, user_id: userId });
+    if (!tag) {
+      return NextResponse.json({ success: false, message: 'ไม่พบ Tag' }, { status: 404 });
     }
 
+    // อัพเดท
     const updateData: any = {};
+    if (name) updateData.name = name;
+    if (color) updateData.color = color;
+    if (description !== undefined) updateData.description = description;
 
-    if (body.name !== undefined) {
-      // ตรวจสอบชื่อซ้ำ
-      const existing = await Tag.findOne({
-        name: body.name,
-        _id: { $ne: id },
-        user_id: payload.userId,
-      });
+    await Tag.findByIdAndUpdate(id, updateData);
 
-      if (existing) {
-        return NextResponse.json({ success: false, message: 'ชื่อ Tag นี้มีอยู่แล้ว' }, { status: 400 });
-      }
-
-      updateData.name = body.name;
-    }
-    
-    if (body.color !== undefined) {
-      updateData.color = body.color;
-    }
-    
-    if (body.description !== undefined) {
-      updateData.description = body.description || null;
-    }
-
-    if (Object.keys(updateData).length === 0) {
-      return NextResponse.json({ success: false, message: 'ไม่มีข้อมูลที่จะอัพเดท' }, { status: 400 });
-    }
-
-    const updated = await Tag.findByIdAndUpdate(id, updateData, { new: true }).lean();
-    const conversationsCount = await Conversation.countDocuments({ tags: id });
-
-    return NextResponse.json({
-      success: true,
-      data: {
-        ...updated,
-        id: updated?._id,
-        conversations_count: conversationsCount,
-      },
-    });
-  } catch (error: any) {
-    console.error('Error updating tag:', error);
-    return NextResponse.json({ success: false, message: error.message }, { status: 500 });
+    return NextResponse.json({ success: true, message: 'อัพเดท Tag สำเร็จ' });
+  } catch (error) {
+    console.error('Update tag error:', error);
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }
 
-// DELETE - Delete tag (เฉพาะ owner)
+// DELETE - ลบ Tag
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
@@ -170,25 +103,18 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     }
 
     const { id } = await params;
+    const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    // ตรวจสอบว่าเป็น owner
-    const { isOwner } = await checkTagAccess(id, payload.userId);
-    if (!isOwner) {
-      return NextResponse.json({ success: false, message: 'เฉพาะเจ้าของเท่านั้นที่ลบได้' }, { status: 403 });
+    const tag = await Tag.findOne({ _id: id, user_id: userId });
+    if (!tag) {
+      return NextResponse.json({ success: false, message: 'ไม่พบ Tag' }, { status: 404 });
     }
 
-    // ลบ tag จาก conversations ก่อน
-    await Conversation.updateMany(
-      { tags: id },
-      { $pull: { tags: id } }
-    );
-
-    // ลบ tag
     await Tag.findByIdAndDelete(id);
 
     return NextResponse.json({ success: true, message: 'ลบ Tag สำเร็จ' });
-  } catch (error: any) {
-    console.error('Error deleting tag:', error);
-    return NextResponse.json({ success: false, message: error.message }, { status: 500 });
+  } catch (error) {
+    console.error('Delete tag error:', error);
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }

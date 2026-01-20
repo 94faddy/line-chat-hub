@@ -1,66 +1,57 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { User } from '@/models';
-import { verifyToken, getTokenFromCookies, hashPassword, verifyPassword } from '@/lib/auth';
+import { verifyTokenFromRequest } from '@/lib/auth';
+import bcrypt from 'bcryptjs';
 
-// PUT - Change password
-export async function PUT(request: NextRequest) {
+// POST - Change password
+export async function POST(request: NextRequest) {
   try {
-    await connectDB();
-    
-    const token = getTokenFromCookies(request);
-    if (!token) {
-      return NextResponse.json({ success: false, error: 'Unauthorized' }, { status: 401 });
+    const user = verifyTokenFromRequest(request);
+    if (!user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const decoded = verifyToken(token);
-    if (!decoded) {
-      return NextResponse.json({ success: false, error: 'Invalid token' }, { status: 401 });
-    }
+    await connectDB();
 
     const body = await request.json();
-    const { current_password, new_password } = body;
+    const { currentPassword, newPassword, confirmPassword } = body;
 
-    if (!current_password || !new_password) {
-      return NextResponse.json(
-        { success: false, error: 'Current password and new password are required' },
-        { status: 400 }
-      );
+    // Validate input
+    if (!currentPassword || !newPassword || !confirmPassword) {
+      return NextResponse.json({ error: 'All fields are required' }, { status: 400 });
     }
 
-    if (new_password.length < 6) {
-      return NextResponse.json(
-        { success: false, error: 'รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร' },
-        { status: 400 }
-      );
+    if (newPassword !== confirmPassword) {
+      return NextResponse.json({ error: 'New passwords do not match' }, { status: 400 });
     }
 
-    // Get current user
-    const user = await User.findById(decoded.userId);
+    if (newPassword.length < 8) {
+      return NextResponse.json({ error: 'Password must be at least 8 characters' }, { status: 400 });
+    }
 
-    if (!user) {
-      return NextResponse.json({ success: false, error: 'User not found' }, { status: 404 });
+    // Get user with password
+    const currentUser = await User.findById(user.id).select('+password');
+    if (!currentUser) {
+      return NextResponse.json({ error: 'User not found' }, { status: 404 });
     }
 
     // Verify current password
-    const isValid = await verifyPassword(current_password, user.password);
-    if (!isValid) {
-      return NextResponse.json(
-        { success: false, error: 'รหัสผ่านปัจจุบันไม่ถูกต้อง' },
-        { status: 400 }
-      );
+    const isMatch = await bcrypt.compare(currentPassword, currentUser.password);
+    if (!isMatch) {
+      return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 });
     }
 
     // Hash new password
-    const hashedPassword = await hashPassword(new_password);
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
 
     // Update password
-    user.password = hashedPassword;
-    await user.save();
+    await User.findByIdAndUpdate(user.id, { password: hashedPassword });
 
-    return NextResponse.json({ success: true, message: 'Password changed successfully' });
-  } catch (error: any) {
-    console.error('Error changing password:', error);
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    console.error('Change password error:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

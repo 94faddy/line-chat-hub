@@ -26,39 +26,33 @@ export async function GET(request: NextRequest) {
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    // ดึง channel IDs ที่ user มีสิทธิ์เข้าถึง
-    // 1. Channels ที่ user เป็นเจ้าของ
-    const ownedChannels = await LineChannel.find({ user_id: userId }).select('_id').lean();
-    const ownedChannelIds = ownedChannels.map(c => c._id);
+    // ดึง channel IDs ที่ user เป็น owner
+    const ownedChannels = await LineChannel.find({ user_id: userId }).select('_id');
+    const ownedChannelIds = ownedChannels.map(ch => ch._id);
 
-    // 2. Channels จาก admin permissions
-    const adminPermissions = await AdminPermission.find({
+    // ดึง admin permissions
+    const adminPerms = await AdminPermission.find({
       admin_id: userId,
-      status: 'active',
-    }).select('channel_id owner_id').lean();
+      status: 'active'
+    });
 
-    const permittedChannelIds = adminPermissions
-      .filter(p => p.channel_id)
-      .map(p => p.channel_id);
+    // รวม channel IDs ที่มีสิทธิ์เข้าถึง
+    let accessibleChannelIds = [...ownedChannelIds];
     
-    const permittedOwnerIds = adminPermissions
-      .filter(p => !p.channel_id)
-      .map(p => p.owner_id);
+    for (const perm of adminPerms) {
+      if (perm.channel_id) {
+        // มีสิทธิ์เข้าถึง specific channel
+        accessibleChannelIds.push(perm.channel_id);
+      } else if (perm.owner_id) {
+        // มีสิทธิ์เข้าถึงทุก channel ของ owner
+        const ownerChannels = await LineChannel.find({ user_id: perm.owner_id }).select('_id');
+        accessibleChannelIds.push(...ownerChannels.map(ch => ch._id));
+      }
+    }
 
-    // ดึง channels ของ owners ที่ได้รับสิทธิ์ทั้งหมด
-    const ownerChannels = await LineChannel.find({
-      user_id: { $in: permittedOwnerIds },
-    }).select('_id').lean();
-
-    const allAccessibleChannelIds = [
-      ...ownedChannelIds,
-      ...permittedChannelIds,
-      ...ownerChannels.map(c => c._id),
-    ];
-
-    // Build query
-    const query: any = {
-      channel_id: { $in: allAccessibleChannelIds },
+    // สร้าง query
+    let query: any = {
+      channel_id: { $in: accessibleChannelIds }
     };
 
     if (channelId) {
@@ -77,39 +71,44 @@ export async function GET(request: NextRequest) {
       .sort({ last_message_at: -1 })
       .lean();
 
-    // Filter by search
+    // Filter by search if provided
     if (search) {
       const searchLower = search.toLowerCase();
-      conversations = conversations.filter((conv: any) => {
-        const displayName = conv.line_user_id?.display_name?.toLowerCase() || '';
+      conversations = conversations.filter(conv => {
+        const lineUser = conv.line_user_id as any;
+        const displayName = lineUser?.display_name?.toLowerCase() || '';
         const preview = conv.last_message_preview?.toLowerCase() || '';
         return displayName.includes(searchLower) || preview.includes(searchLower);
       });
     }
 
-    // Format response
-    const formattedConversations = conversations.map((conv: any) => ({
+    // แปลงรูปแบบข้อมูล
+    const formattedConversations = conversations.map(conv => ({
       id: conv._id,
-      channel_id: conv.channel_id?._id,
-      line_user_id: conv.line_user_id?._id,
+      channel_id: (conv.channel_id as any)?._id,
+      line_user_id: (conv.line_user_id as any)?._id,
       status: conv.status,
       last_message_preview: conv.last_message_preview,
       last_message_at: conv.last_message_at,
       unread_count: conv.unread_count,
       created_at: conv.created_at,
-      channel: conv.channel_id ? {
-        id: conv.channel_id._id,
-        channel_name: conv.channel_id.channel_name,
-        picture_url: conv.channel_id.picture_url,
-        basic_id: conv.channel_id.basic_id,
-      } : null,
-      line_user: conv.line_user_id ? {
-        id: conv.line_user_id._id,
-        line_user_id: conv.line_user_id.line_user_id,
-        display_name: conv.line_user_id.display_name,
-        picture_url: conv.line_user_id.picture_url,
-      } : null,
-      tags: conv.tags || [],
+      channel: {
+        id: (conv.channel_id as any)?._id,
+        channel_name: (conv.channel_id as any)?.channel_name,
+        picture_url: (conv.channel_id as any)?.picture_url,
+        basic_id: (conv.channel_id as any)?.basic_id
+      },
+      line_user: {
+        id: (conv.line_user_id as any)?._id,
+        line_user_id: (conv.line_user_id as any)?.line_user_id,
+        display_name: (conv.line_user_id as any)?.display_name,
+        picture_url: (conv.line_user_id as any)?.picture_url
+      },
+      tags: (conv.tags || []).map((tag: any) => ({
+        id: tag._id,
+        name: tag.name,
+        color: tag.color
+      }))
     }));
 
     return NextResponse.json({ success: true, data: formattedConversations });

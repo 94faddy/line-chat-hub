@@ -48,18 +48,20 @@ export async function POST(request: NextRequest) {
       owner_id: payload.userId,
       admin_id: null, // ยังไม่มีคนรับเชิญ
       channel_id: channel_id || null,
-      can_reply,
-      can_view_all,
-      can_broadcast,
-      can_manage_tags,
+      permissions: {
+        can_reply,
+        can_view_all,
+        can_broadcast,
+        can_manage_tags,
+      },
       status: 'pending',
       invite_token: inviteToken,
     });
 
     await permission.save();
 
-    // สร้าง URL สำหรับเชิญ
-    const inviteUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/invite/${inviteToken}`;
+    // สร้าง URL สำหรับเชิญ (ใช้หน้า /auth/accept-invite)
+    const inviteUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'}/auth/accept-invite?token=${inviteToken}`;
 
     return NextResponse.json({
       success: true,

@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { AdminPermission, User, LineChannel } from '@/models';
 import { verifyToken } from '@/lib/auth';
+import mongoose from 'mongoose';
 
-// GET - ดึงรายการทีมงาน (admins ที่ owner เชิญ)
+// GET - ดึงรายการ Team Members
 export async function GET(request: NextRequest) {
   try {
     await connectDB();
@@ -18,47 +19,30 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
     }
 
-    const { searchParams } = new URL(request.url);
-    const channelId = searchParams.get('channel_id');
+    const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    const query: any = {
-      owner_id: payload.userId,
-    };
-
-    if (channelId) {
-      query.channel_id = channelId;
-    }
-
-    const permissions = await AdminPermission.find(query)
-      .populate('admin_id', 'name email avatar')
+    // ดึง permissions ที่ user เป็น owner
+    const permissions = await AdminPermission.find({ owner_id: userId })
+      .populate('admin_id', 'email name avatar')
       .populate('channel_id', 'channel_name')
-      .sort({ created_at: -1 })
       .lean();
 
-    const formattedPermissions = permissions.map((p: any) => ({
-      id: p._id,
-      admin: p.admin_id ? {
-        id: p.admin_id._id,
-        name: p.admin_id.name,
-        email: p.admin_id.email,
-        avatar: p.admin_id.avatar,
-      } : null,
-      channel: p.channel_id ? {
-        id: p.channel_id._id,
-        name: p.channel_id.channel_name,
-      } : { id: null, name: 'ทุก Channel' },
-      permissions: {
-        can_reply: p.can_reply,
-        can_view_all: p.can_view_all,
-        can_broadcast: p.can_broadcast,
-        can_manage_tags: p.can_manage_tags,
-      },
-      status: p.status,
-      invite_token: p.invite_token,
-      created_at: p.created_at,
+    const formattedMembers = permissions.map(perm => ({
+      id: perm._id,
+      admin_id: perm.admin_id ? (perm.admin_id as any)._id : null,
+      admin_email: perm.admin_id ? (perm.admin_id as any).email : null,
+      admin_name: perm.admin_id ? (perm.admin_id as any).name : null,
+      admin_avatar: perm.admin_id ? (perm.admin_id as any).avatar : null,
+      channel_id: perm.channel_id ? (perm.channel_id as any)._id : null,
+      channel_name: perm.channel_id ? (perm.channel_id as any).channel_name : 'ทุก Channel',
+      permissions: perm.permissions,
+      status: perm.status,
+      invite_token: perm.status === 'pending' ? perm.invite_token : undefined,
+      invited_at: perm.invited_at,
+      accepted_at: perm.accepted_at
     }));
 
-    return NextResponse.json({ success: true, data: formattedPermissions });
+    return NextResponse.json({ success: true, data: formattedMembers });
   } catch (error) {
     console.error('Get team error:', error);
     return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });

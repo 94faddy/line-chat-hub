@@ -77,3 +77,6 @@ export function getTokenFromCookies(request: Request): string | null {
 
 // Alias for comparePassword
 export const verifyPassword = comparePassword;
+
+// Alias for generateToken (ใช้ใน API routes)
+export const createToken = generateToken;
