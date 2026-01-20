@@ -66,10 +66,20 @@ export async function GET(request: NextRequest) {
     // ดึง conversations พร้อม populate
     let conversations = await Conversation.find(query)
       .populate('channel_id', 'channel_name picture_url basic_id')
-      .populate('line_user_id', 'line_user_id display_name picture_url')
+      .populate('line_user_id', 'line_user_id display_name picture_url follow_status')
       .populate('tags', 'name color')
       .sort({ last_message_at: -1 })
       .lean();
+
+    // Filter out Unknown/null display_name by default (unless show_unknown=true)
+    const showUnknown = searchParams.get('show_unknown') === 'true';
+    if (!showUnknown) {
+      conversations = conversations.filter(conv => {
+        const lineUser = conv.line_user_id as any;
+        const displayName = lineUser?.display_name;
+        return displayName && displayName !== 'Unknown' && displayName.trim() !== '';
+      });
+    }
 
     // Filter by search if provided
     if (search) {
@@ -102,7 +112,8 @@ export async function GET(request: NextRequest) {
         id: (conv.line_user_id as any)?._id,
         line_user_id: (conv.line_user_id as any)?.line_user_id,
         display_name: (conv.line_user_id as any)?.display_name,
-        picture_url: (conv.line_user_id as any)?.picture_url
+        picture_url: (conv.line_user_id as any)?.picture_url,
+        follow_status: (conv.line_user_id as any)?.follow_status || 'unknown'
       },
       tags: (conv.tags || []).map((tag: any) => ({
         id: tag._id,

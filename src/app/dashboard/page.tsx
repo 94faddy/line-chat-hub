@@ -7,46 +7,47 @@ import {
   FiSmile, FiPaperclip, FiCheck, FiCheckCircle, FiX,
   FiTag, FiUser, FiMessageCircle, FiInbox, FiZap, FiPlus,
   FiTrash2, FiEdit2, FiBell, FiBellOff, FiDownload, FiExternalLink,
-  FiChevronDown
+  FiChevronDown, FiRefreshCw
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 import { FlexMessageRenderer, LinkifyText } from '@/components/FlexMessageRenderer';
 import QuickRepliesPanel from '@/components/QuickRepliesPanel';
 
 interface Channel {
-  id: number;
+  id: string;
   channel_name: string;
   picture_url?: string;
   basic_id?: string;
 }
 
 interface LineUser {
-  id: number;
+  id: string;
   display_name?: string;
   picture_url?: string;
   line_user_id: string;
+  follow_status?: 'following' | 'unfollowed' | 'blocked' | 'unknown';
 }
 
 interface Tag {
-  id: number;
+  id: string;
   name: string;
   color: string;
 }
 
 interface QuickReply {
-  id: number;
+  id: string;
   title: string;
   shortcut?: string;
   message_type: string;
   content: string;
   media_url?: string;
-  channel_id?: number;
+  channel_id?: string;
 }
 
 interface Conversation {
-  id: number;
-  channel_id: number;
-  line_user_id: number;
+  id: string;
+  channel_id: string;
+  line_user_id: string;
   status: string;
   last_message_preview?: string;
   last_message_at?: string;
@@ -57,7 +58,7 @@ interface Conversation {
 }
 
 interface Message {
-  id: number;
+  id: string;
   direction: 'incoming' | 'outgoing';
   message_type: string;
   content?: string;
@@ -504,14 +505,14 @@ export default function InboxPage() {
   const [loading, setLoading] = useState(true);
   const [sendingMessage, setSendingMessage] = useState(false);
   const [newMessage, setNewMessage] = useState('');
-  const [filterChannel, setFilterChannel] = useState<number | 'all'>('all');
+  const [filterChannel, setFilterChannel] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
   
   // Tags state
   const [allTags, setAllTags] = useState<Tag[]>([]);
   const [showTagModal, setShowTagModal] = useState(false);
-  const [conversationTags, setConversationTags] = useState<number[]>([]);
+  const [conversationTags, setConversationTags] = useState<string[]>([]);
   
   // Quick Replies state
   const [quickReplies, setQuickReplies] = useState<QuickReply[]>([]);
@@ -531,6 +532,9 @@ export default function InboxPage() {
   // Emoji & Sticker Picker state
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showStickerPicker, setShowStickerPicker] = useState(false);
+  
+  // More Menu state
+  const [showMoreMenu, setShowMoreMenu] = useState(false);
 
   // ============================================
   // Scroll & New Message Bubble State
@@ -1228,10 +1232,10 @@ export default function InboxPage() {
     e.target.value = '';
   };
 
-  const updateConversationStatus = async (conversationId: number, status: string) => {
+  const updateConversationStatus = async (conversationId: string, status: string) => {
     try {
       await fetch(`/api/messages/conversations/${conversationId}/status`, {
-        method: 'PUT',
+        method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
@@ -1246,7 +1250,110 @@ export default function InboxPage() {
     }
   };
 
-  const handleTagToggle = async (tagId: number) => {
+  // ลบ conversation
+  const deleteConversation = async (conversationId: string) => {
+    const result = await Swal.fire({
+      title: 'ยืนยันการลบ',
+      text: 'คุณต้องการลบการสนทนานี้หรือไม่? การดำเนินการนี้ไม่สามารถย้อนกลับได้',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#6b7280',
+      confirmButtonText: 'ลบ',
+      cancelButtonText: 'ยกเลิก'
+    });
+
+    if (result.isConfirmed) {
+      try {
+        const res = await fetch(`/api/messages/conversations/${conversationId}`, {
+          method: 'DELETE',
+        });
+        
+        if (res.ok) {
+          setConversations(prev => prev.filter(c => c.id !== conversationId));
+          if (selectedConversation?.id === conversationId) {
+            setSelectedConversation(null);
+            setMessages([]);
+          }
+          Swal.fire({
+            icon: 'success',
+            title: 'ลบสำเร็จ',
+            text: 'ลบการสนทนาเรียบร้อยแล้ว',
+            timer: 1500,
+            showConfirmButton: false
+          });
+        } else {
+          throw new Error('Failed to delete');
+        }
+      } catch (error) {
+        console.error('Error deleting conversation:', error);
+        Swal.fire({
+          icon: 'error',
+          title: 'เกิดข้อผิดพลาด',
+          text: 'ไม่สามารถลบการสนทนาได้'
+        });
+      }
+    }
+  };
+
+  // Refresh LINE user profile
+  const refreshUserProfile = async () => {
+    if (!selectedConversation?.line_user?.id) return;
+    
+    try {
+      const res = await fetch('/api/messages/refresh-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ line_user_id: selectedConversation.line_user.id }),
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        // Update local state
+        const updatedLineUser = {
+          ...selectedConversation.line_user,
+          display_name: data.data.display_name,
+          picture_url: data.data.picture_url,
+          follow_status: 'following' as const
+        };
+        
+        setSelectedConversation(prev => prev ? { 
+          ...prev, 
+          line_user: updatedLineUser 
+        } : null);
+        
+        setConversations(prev => prev.map(c => 
+          c.id === selectedConversation.id 
+            ? { ...c, line_user: updatedLineUser } 
+            : c
+        ));
+        
+        Swal.fire({
+          icon: 'success',
+          title: 'อัพเดทสำเร็จ',
+          text: `โปรไฟล์: ${data.data.display_name}`,
+          timer: 2000,
+          showConfirmButton: false
+        });
+      } else {
+        Swal.fire({
+          icon: 'warning',
+          title: 'ไม่สามารถดึงโปรไฟล์ได้',
+          text: data.message || 'ผู้ใช้อาจยกเลิกการติดตามแล้ว'
+        });
+      }
+    } catch (error) {
+      console.error('Error refreshing profile:', error);
+      Swal.fire({
+        icon: 'error',
+        title: 'เกิดข้อผิดพลาด',
+        text: 'ไม่สามารถดึงโปรไฟล์ได้'
+      });
+    }
+  };
+
+  const handleTagToggle = async (tagId: string) => {
     if (!selectedConversation) return;
     
     const isSelected = conversationTags.includes(tagId);
@@ -1260,7 +1367,7 @@ export default function InboxPage() {
       await fetch(`/api/messages/conversations/${selectedConversation.id}/tags`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tags: newTags }),
+        body: JSON.stringify({ tag_ids: newTags }),
       });
       
       const selectedTags = allTags.filter(t => newTags.includes(t.id));
@@ -1321,7 +1428,7 @@ export default function InboxPage() {
 
   // Filter conversations
   const filteredConversations = conversations.filter(conv => {
-    if (filterChannel !== 'all' && conv.channel_id !== filterChannel) return false;
+    if (filterChannel !== 'all' && String(conv.channel_id) !== filterChannel) return false;
     if (filterStatus !== 'all' && conv.status !== filterStatus) return false;
     if (searchQuery) {
       const search = searchQuery.toLowerCase();
@@ -1399,12 +1506,12 @@ export default function InboxPage() {
           <div className="flex gap-2">
             <select
               value={filterChannel}
-              onChange={(e) => setFilterChannel(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+              onChange={(e) => setFilterChannel(e.target.value)}
               className="input py-2 text-sm flex-1"
             >
               <option value="all">ทุกเพจ</option>
               {channels.map(ch => (
-                <option key={ch.id} value={ch.id}>{ch.channel_name}</option>
+                <option key={ch.id} value={String(ch.id)}>{ch.channel_name}</option>
               ))}
             </select>
             <select
@@ -1531,23 +1638,21 @@ export default function InboxPage() {
               </div>
               
               <div className="flex items-center gap-2">
-                <select
-                  value={selectedConversation.status}
-                  onChange={(e) => updateConversationStatus(selectedConversation.id, e.target.value)}
-                  className="input py-1.5 text-sm"
+                {/* Refresh Profile Button */}
+                <button 
+                  onClick={refreshUserProfile}
+                  className="p-2 hover:bg-gray-100 rounded-lg"
+                  title="รีเฟรชโปรไฟล์ผู้ใช้"
                 >
-                  <option value="unread">ยังไม่อ่าน</option>
-                  <option value="read">อ่านแล้ว</option>
-                  <option value="processing">กำลังดำเนินการ</option>
-                  <option value="completed">เสร็จสิ้น</option>
-                  <option value="spam">Spam</option>
-                </select>
+                  <FiRefreshCw className="w-5 h-5 text-gray-500" />
+                </button>
                 
                 {/* Tag Button */}
                 <div className="relative">
                   <button 
                     onClick={() => setShowTagModal(!showTagModal)}
                     className="p-2 hover:bg-gray-100 rounded-lg"
+                    title="จัดการ Tags"
                   >
                     <FiTag className="w-5 h-5 text-gray-500" />
                   </button>
@@ -1584,9 +1689,80 @@ export default function InboxPage() {
                   )}
                 </div>
                 
-                <button className="p-2 hover:bg-gray-100 rounded-lg">
-                  <FiMoreVertical className="w-5 h-5 text-gray-500" />
-                </button>
+                {/* More Menu Button */}
+                <div className="relative">
+                  <button 
+                    onClick={() => setShowMoreMenu(!showMoreMenu)}
+                    className="p-2 hover:bg-gray-100 rounded-lg"
+                    title="ตัวเลือกเพิ่มเติม"
+                  >
+                    <FiMoreVertical className="w-5 h-5 text-gray-500" />
+                  </button>
+                  
+                  {showMoreMenu && (
+                    <>
+                      <div className="fixed inset-0 z-10" onClick={() => setShowMoreMenu(false)} />
+                      <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border border-gray-200 py-1 z-20">
+                        {/* Status Section */}
+                        <div className="px-3 py-2 border-b border-gray-100">
+                          <p className="text-xs text-gray-500 mb-2">เปลี่ยนสถานะ</p>
+                          <div className="flex flex-wrap gap-1">
+                            {[
+                              { value: 'unread', label: 'ยังไม่อ่าน', color: 'bg-blue-100 text-blue-700' },
+                              { value: 'read', label: 'อ่านแล้ว', color: 'bg-gray-100 text-gray-700' },
+                              { value: 'processing', label: 'กำลังดำเนินการ', color: 'bg-yellow-100 text-yellow-700' },
+                              { value: 'completed', label: 'เสร็จสิ้น', color: 'bg-green-100 text-green-700' },
+                            ].map(status => (
+                              <button
+                                key={status.value}
+                                onClick={() => {
+                                  updateConversationStatus(selectedConversation.id, status.value);
+                                  setShowMoreMenu(false);
+                                }}
+                                className={`px-2 py-1 rounded text-xs font-medium transition-all ${
+                                  selectedConversation.status === status.value 
+                                    ? status.color + ' ring-2 ring-offset-1 ring-gray-400' 
+                                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                                }`}
+                              >
+                                {status.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        
+                        {/* Actions */}
+                        <div className="py-1">
+                          <button
+                            onClick={() => {
+                              updateConversationStatus(selectedConversation.id, 'spam');
+                              setShowMoreMenu(false);
+                            }}
+                            className={`w-full px-3 py-2 text-left text-sm flex items-center gap-2 ${
+                              selectedConversation.status === 'spam' 
+                                ? 'bg-orange-50 text-orange-700' 
+                                : 'hover:bg-gray-50 text-gray-700'
+                            }`}
+                          >
+                            <FiX className="w-4 h-4" />
+                            {selectedConversation.status === 'spam' ? 'เป็น Spam อยู่แล้ว' : 'ทำเครื่องหมายเป็น Spam'}
+                          </button>
+                          
+                          <button
+                            onClick={() => {
+                              setShowMoreMenu(false);
+                              deleteConversation(selectedConversation.id);
+                            }}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-red-50 text-red-600 flex items-center gap-2"
+                          >
+                            <FiTrash2 className="w-4 h-4" />
+                            ลบการสนทนา
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -1640,12 +1816,21 @@ export default function InboxPage() {
                     {msg.message_type === 'audio' && msg.media_url && (
                       <audio src={getMediaUrl(msg.media_url)} controls className="w-full" />
                     )}
-                    {msg.message_type === 'sticker' && (
+                    {msg.message_type === 'sticker' && msg.sticker_id && (
                       <img 
                         src={`https://stickershop.line-scdn.net/stickershop/v1/sticker/${msg.sticker_id}/android/sticker.png`}
                         alt="Sticker"
                         className="w-24 h-24"
+                        onError={(e) => {
+                          const target = e.target as HTMLImageElement;
+                          target.src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect fill="%23f3f4f6" width="96" height="96" rx="8"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="%239ca3af" font-size="32">😀</text></svg>';
+                        }}
                       />
+                    )}
+                    {msg.message_type === 'sticker' && !msg.sticker_id && (
+                      <div className="w-24 h-24 bg-gray-100 rounded-lg flex items-center justify-center">
+                        <span className="text-3xl">😀</span>
+                      </div>
                     )}
                     {msg.message_type === 'location' && msg.content && (
                       <div className="bg-gray-50 p-2 rounded">
@@ -1719,7 +1904,39 @@ export default function InboxPage() {
               </div>
             )}
 
+            {/* ⚠️ Warning Banner for Unknown/Unfollowed Users */}
+            {selectedConversation && (!selectedConversation.line_user?.display_name || 
+              selectedConversation.line_user?.display_name === 'Unknown' ||
+              selectedConversation.line_user?.follow_status === 'unfollowed' ||
+              selectedConversation.line_user?.follow_status === 'blocked') && (
+              <div className="bg-amber-50 border-t border-amber-200 px-4 py-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex-shrink-0">
+                    <svg className="w-5 h-5 text-amber-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm text-amber-700 font-medium">
+                      {selectedConversation.line_user?.follow_status === 'unfollowed' 
+                        ? 'ผู้ใช้นี้ยกเลิกการติดตามแล้ว'
+                        : selectedConversation.line_user?.follow_status === 'blocked'
+                        ? 'ผู้ใช้นี้ถูกบล็อก'
+                        : 'ไม่สามารถดึงข้อมูลโปรไฟล์ผู้ใช้ได้'}
+                    </p>
+                    <p className="text-xs text-amber-600 mt-0.5">
+                      ไม่สามารถส่งข้อความไปยังผู้ใช้นี้ได้
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
+
             {/* Message Input */}
+            {selectedConversation && selectedConversation.line_user?.display_name && 
+             selectedConversation.line_user?.display_name !== 'Unknown' &&
+             selectedConversation.line_user?.follow_status !== 'unfollowed' &&
+             selectedConversation.line_user?.follow_status !== 'blocked' ? (
             <form onSubmit={handleSendMessage} className={`bg-white ${!showQuickReplies ? 'border-t border-gray-200' : ''} p-4 pt-3`}>
               <div className="flex items-center gap-2">
                 {/* Image Upload */}
@@ -1847,6 +2064,15 @@ export default function InboxPage() {
                 </button>
               </div>
             </form>
+            ) : selectedConversation && (
+              /* Disabled Input State */
+              <div className="bg-gray-100 border-t border-gray-200 p-4">
+                <div className="flex items-center justify-center gap-2 text-gray-500">
+                  <FiX className="w-5 h-5" />
+                  <span className="text-sm">ไม่สามารถส่งข้อความไปยังผู้ใช้นี้ได้</span>
+                </div>
+              </div>
+            )}
           </>
         ) : (
           <div className="flex-1 flex flex-col items-center justify-center text-gray-500">

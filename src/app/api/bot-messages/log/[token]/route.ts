@@ -47,12 +47,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }, { status: 400 });
     }
 
-    // ⭐ ถ้าไม่ได้ส่ง channel_id มา ให้หาจาก user's channels
+    // ⭐ หา channel
     let channel;
     if (channel_id) {
       channel = await LineChannel.findById(channel_id);
     } else {
-      // หา channel แรกของ user หรือหาจาก line_user_id ที่เคยคุยด้วย
+      // หาจาก line_user_id ที่มีอยู่แล้ว
       const existingLineUser = await LineUser.findOne({ line_user_id: line_user_id })
         .populate('channel_id');
       
@@ -79,35 +79,88 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ error: 'Access denied' }, { status: 403 });
     }
 
-    // Find or create LINE user
+    // ⭐ Find existing LINE user for this channel
     let lineUser = await LineUser.findOne({ 
       line_user_id: line_user_id,
       channel_id: channel._id
     });
 
     if (!lineUser) {
-      // ⭐ พยายามดึงข้อมูลจาก LINE API ก่อน
-      let displayName = body.user_name || 'Unknown';
-      let pictureUrl = null;
+      // ⭐ ต้องดึง profile จาก LINE API ก่อนสร้าง user ใหม่
+      let profile: any = null;
+      let followStatus: 'following' | 'unfollowed' | 'blocked' | 'unknown' = 'unknown';
       
       try {
-        const profile = await getUserProfile(channel.channel_access_token, line_user_id);
+        profile = await getUserProfile(channel.channel_access_token, line_user_id);
         if (profile && profile.displayName) {
-          displayName = profile.displayName;
-          pictureUrl = profile.pictureUrl || null;
-          console.log('👤 [Bot Log] Got profile from LINE:', displayName);
+          followStatus = 'following';
+          console.log('👤 [Bot Log] Got profile from LINE:', profile.displayName);
         }
-      } catch (e) {
-        console.log('⚠️ [Bot Log] Could not get LINE profile, using fallback name');
+      } catch (e: any) {
+        // ถ้า 404 แสดงว่า user unfollow หรือไม่เคยเพิ่มเพื่อน
+        if (e.response?.status === 404 || e.message?.includes('404')) {
+          followStatus = 'unfollowed';
+          console.log('⚠️ [Bot Log] User has unfollowed or never followed');
+        } else {
+          console.log('⚠️ [Bot Log] Could not get LINE profile:', e.message);
+        }
+      }
+
+      // ⭐ ถ้าดึง profile ไม่ได้ ไม่สร้าง user/conversation ใหม่
+      if (!profile || !profile.displayName) {
+        console.log('❌ [Bot Log] Cannot create conversation - user profile not available');
+        return NextResponse.json({ 
+          error: 'Cannot log message - user may have unfollowed or blocked the bot',
+          follow_status: followStatus
+        }, { status: 400 });
       }
       
+      // สร้าง LINE user ใหม่
       lineUser = await LineUser.create({
         line_user_id: line_user_id,
         channel_id: channel._id,
-        display_name: displayName,
-        picture_url: pictureUrl
+        display_name: profile.displayName,
+        picture_url: profile.pictureUrl || null,
+        status_message: profile.statusMessage || null,
+        follow_status: followStatus
       });
-      console.log('👤 [Bot Log] Created new LINE user:', lineUser._id, displayName);
+      console.log('👤 [Bot Log] Created new LINE user:', lineUser._id, profile.displayName);
+    } else {
+      // ⭐ ถ้า user มีอยู่แล้ว ตรวจสอบว่า display_name ยังเป็น null/Unknown หรือไม่
+      if (!lineUser.display_name || lineUser.display_name === 'Unknown') {
+        // ลองดึง profile ใหม่
+        try {
+          const profile = await getUserProfile(channel.channel_access_token, line_user_id);
+          if (profile && profile.displayName) {
+            lineUser.display_name = profile.displayName;
+            lineUser.picture_url = profile.pictureUrl || lineUser.picture_url;
+            lineUser.follow_status = 'following';
+            await lineUser.save();
+            console.log('👤 [Bot Log] Updated user profile:', profile.displayName);
+          }
+        } catch (e: any) {
+          if (e.response?.status === 404 || e.message?.includes('404')) {
+            lineUser.follow_status = 'unfollowed';
+            await lineUser.save();
+          }
+          console.log('⚠️ [Bot Log] Could not refresh profile');
+        }
+      }
+
+      // ⭐ ถ้า follow_status เป็น unfollowed หรือ display_name ยังเป็น null ไม่ควรสร้าง message
+      if (lineUser.follow_status === 'unfollowed' || lineUser.follow_status === 'blocked') {
+        return NextResponse.json({ 
+          error: 'Cannot log message - user has unfollowed or blocked',
+          follow_status: lineUser.follow_status
+        }, { status: 400 });
+      }
+      
+      if (!lineUser.display_name || lineUser.display_name === 'Unknown') {
+        return NextResponse.json({ 
+          error: 'Cannot log message - user profile not available',
+          follow_status: lineUser.follow_status
+        }, { status: 400 });
+      }
     }
 
     // Find or create conversation

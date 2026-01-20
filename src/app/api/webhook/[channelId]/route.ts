@@ -103,6 +103,8 @@ async function handleEvent(event: any, channel: any) {
         content: savedMessage.content,
         media_url: savedMessage.media_url,
         flex_content: savedMessage.flex_content,
+        sticker_id: savedMessage.sticker_id,
+        package_id: savedMessage.package_id,
         source_type: savedMessage.source_type,
         created_at: savedMessage.created_at
       });
@@ -137,25 +139,55 @@ async function getOrCreateLineUser(channelId: any, lineUserId: string, accessTok
   });
 
   if (existingUser) {
+    // ⭐ ถ้าได้รับข้อความจาก user แสดงว่ายังติดตามอยู่
+    // ถ้า display_name เป็น null/Unknown ลองดึง profile ใหม่
+    if (!existingUser.display_name || existingUser.display_name === 'Unknown') {
+      try {
+        const profile = await getUserProfile(accessToken, lineUserId);
+        if (profile && profile.displayName) {
+          existingUser.display_name = profile.displayName;
+          existingUser.picture_url = profile.pictureUrl || existingUser.picture_url;
+          existingUser.status_message = profile.statusMessage || existingUser.status_message;
+          existingUser.follow_status = 'following';
+          await existingUser.save();
+          console.log('✅ [Webhook] Updated user profile:', profile.displayName);
+        }
+      } catch (e) {
+        console.error('❌ [Webhook] Retry get profile error:', e);
+      }
+    } else {
+      // ⭐ User ส่งข้อความมา แสดงว่ายังติดตามอยู่
+      if (existingUser.follow_status !== 'following') {
+        existingUser.follow_status = 'following';
+        await existingUser.save();
+        console.log('✅ [Webhook] User re-followed, status updated');
+      }
+    }
     return existingUser;
   }
 
   // ดึงโปรไฟล์จาก LINE
   let profile: any = {};
+  let followStatus: 'following' | 'unfollowed' | 'blocked' | 'unknown' = 'following';
+  
   try {
     profile = await getUserProfile(accessToken, lineUserId);
-  } catch (e) {
-    console.error('Get profile error:', e);
+    console.log('✅ [Webhook] Got user profile:', profile.displayName);
+  } catch (e: any) {
+    console.error('❌ [Webhook] Get profile error:', e);
+    // ถ้า user ส่งข้อความมาได้ แต่ดึง profile ไม่ได้ อาจจะปิด privacy
+    followStatus = 'unknown';
   }
 
   // สร้าง user ใหม่
   const newUser = new LineUser({
     channel_id: channelId,
     line_user_id: lineUserId,
-    display_name: profile.displayName || 'Unknown',
+    display_name: profile.displayName || null,
     picture_url: profile.pictureUrl || null,
     status_message: profile.statusMessage || null,
     language: profile.language || 'th',
+    follow_status: profile.displayName ? 'following' : followStatus,
   });
 
   await newUser.save();

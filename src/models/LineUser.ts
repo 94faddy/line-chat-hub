@@ -12,6 +12,7 @@ export interface ILineUser extends Document {
   notes?: string;
   is_blocked: boolean;
   is_spam: boolean;
+  follow_status: 'following' | 'unfollowed' | 'blocked' | 'unknown';
   last_message_at?: Date;
   created_at: Date;
   updated_at: Date;
@@ -32,7 +33,7 @@ const LineUserSchema = new Schema<ILineUser>(
     },
     display_name: {
       type: String,
-      default: 'Unknown',
+      default: null,
     },
     picture_url: String,
     status_message: String,
@@ -50,6 +51,12 @@ const LineUserSchema = new Schema<ILineUser>(
     is_spam: {
       type: Boolean,
       default: false,
+      index: true,
+    },
+    follow_status: {
+      type: String,
+      enum: ['following', 'unfollowed', 'blocked', 'unknown'],
+      default: 'unknown',
       index: true,
     },
     last_message_at: {
