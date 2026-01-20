@@ -10,7 +10,7 @@ echo "📦 Building Next.js..."
 npm run build
 
 echo "🚀 Starting line-chat-hub..."
-pm2 start npm --name "$APP_NAME" -- run start
+pm2 start npm --name "$APPNAME" -- start
 
 echo "💾 Saving PM2 process list..."
 pm2 save
