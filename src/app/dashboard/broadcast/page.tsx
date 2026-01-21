@@ -1,13 +1,15 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { 
   FiMessageCircle, FiSend, FiUsers, FiRadio, FiImage,
   FiClock, FiCheckCircle, FiXCircle, FiTrash2,
   FiFilter, FiCalendar, FiAlertTriangle, FiInfo,
-  FiDollarSign, FiZap, FiCode, FiHash
+  FiDollarSign, FiZap, FiCode, FiHash, FiPlus,
+  FiChevronUp, FiChevronDown, FiEye, FiX, FiCopy
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
+import { FlexMessageRenderer } from '@/components/FlexMessageRenderer';
 
 interface Broadcast {
   id: string;
@@ -31,6 +33,20 @@ interface Channel {
   followers_count?: number;
 }
 
+// Message Box interface
+interface MessageBox {
+  id: string;
+  type: 'text' | 'image' | 'flex';
+  content: string;
+  imageUrl: string;
+  flexJson: string;
+  altText: string;
+  validation: {
+    valid: boolean;
+    error: string;
+  };
+}
+
 // ฟังก์ชันแสดงเวลาแบบ Asia/Bangkok
 function formatThaiDateTime(dateString: string): string {
   const date = new Date(dateString);
@@ -44,6 +60,412 @@ function formatThaiDateTime(dateString: string): string {
   });
 }
 
+// Generate unique ID
+const generateId = () => Math.random().toString(36).substring(2, 9);
+
+// Validate Flex JSON (รองรับรูปแบบจาก LINE Flex Simulator)
+const validateFlexJson = (json: string): { valid: boolean; error: string; parsed?: any } => {
+  if (!json.trim()) {
+    return { valid: false, error: 'กรุณาใส่ Flex Message JSON' };
+  }
+
+  try {
+    const parsed = JSON.parse(json);
+    
+    // รองรับรูปแบบจาก LINE Flex Simulator (ไม่มี type: "flex")
+    if (parsed.type === 'bubble' || parsed.type === 'carousel') {
+      return { valid: true, error: '', parsed };
+    }
+    
+    // รองรับรูปแบบเต็ม (มี type: "flex")
+    if (parsed.type === 'flex') {
+      if (!parsed.altText) {
+        return { valid: false, error: 'ต้องมี "altText" สำหรับรูปแบบ type: "flex"' };
+      }
+      if (!parsed.contents) {
+        return { valid: false, error: 'ต้องมี "contents" สำหรับรูปแบบ type: "flex"' };
+      }
+      return { valid: true, error: '', parsed };
+    }
+    
+    return { valid: false, error: 'JSON ต้องมี type เป็น "bubble", "carousel" หรือ "flex"' };
+  } catch (e) {
+    return { valid: false, error: 'JSON format ไม่ถูกต้อง' };
+  }
+};
+
+// Flex Preview Modal Component
+const FlexPreviewModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  flexJson: string;
+  altText: string;
+}> = ({ isOpen, onClose, flexJson, altText }) => {
+  if (!isOpen) return null;
+
+  const validation = validateFlexJson(flexJson);
+  let flexContent = null;
+  
+  if (validation.valid && validation.parsed) {
+    // ถ้าเป็นรูปแบบจาก Simulator (bubble/carousel) ใช้ตรงๆ
+    if (validation.parsed.type === 'bubble' || validation.parsed.type === 'carousel') {
+      flexContent = validation.parsed;
+    } else if (validation.parsed.type === 'flex' && validation.parsed.contents) {
+      flexContent = validation.parsed.contents;
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
+      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden animate-fadeIn">
+        <div className="flex items-center justify-between p-4 border-b border-gray-100">
+          <div>
+            <h3 className="font-bold text-gray-900">ตัวอย่าง Flex Message</h3>
+            <p className="text-sm text-gray-500">แสดงผลคล้ายกับใน LINE</p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg">
+            <FiX className="w-5 h-5" />
+          </button>
+        </div>
+        
+        <div className="p-4 bg-[#7494C0] min-h-[300px]">
+          {/* Chat bubble style */}
+          <div className="flex justify-end mb-4">
+            <div className="bg-[#A8D98A] rounded-2xl rounded-tr-sm px-4 py-2 max-w-[70%]">
+              <p className="text-sm">ส่ง Flex Message</p>
+            </div>
+          </div>
+          
+          {/* Flex Message Preview */}
+          <div className="flex justify-start">
+            <div className="max-w-[85%]">
+              {validation.valid && flexContent ? (
+                <FlexMessageRenderer content={flexContent} />
+              ) : (
+                <div className="bg-white rounded-xl p-4">
+                  <p className="text-red-500 text-sm">{validation.error || 'ไม่สามารถแสดงผลได้'}</p>
+                </div>
+              )}
+            </div>
+          </div>
+          
+          {/* Alt Text Preview */}
+          {altText && (
+            <div className="mt-4 p-3 bg-white/90 rounded-lg">
+              <p className="text-xs text-gray-500 mb-1">Alt Text (แสดงในการแจ้งเตือน):</p>
+              <p className="text-sm text-gray-700">{altText}</p>
+            </div>
+          )}
+        </div>
+        
+        <div className="p-4 border-t border-gray-100">
+          <button onClick={onClose} className="btn btn-secondary w-full">
+            ปิด
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// Message Box Component
+const MessageBoxCard: React.FC<{
+  box: MessageBox;
+  index: number;
+  total: number;
+  onUpdate: (box: MessageBox) => void;
+  onDelete: () => void;
+  onMoveUp: () => void;
+  onMoveDown: () => void;
+}> = ({ box, index, total, onUpdate, onDelete, onMoveUp, onMoveDown }) => {
+  const [showPreview, setShowPreview] = useState(false);
+
+  const handleTypeChange = (type: 'text' | 'image' | 'flex') => {
+    onUpdate({ ...box, type });
+  };
+
+  const handleFlexChange = (flexJson: string) => {
+    const validation = validateFlexJson(flexJson);
+    onUpdate({
+      ...box,
+      flexJson,
+      validation: {
+        valid: validation.valid,
+        error: validation.error
+      }
+    });
+  };
+
+  // Sample Flex from LINE Simulator format
+  const sampleFlexSimulator = `{
+  "type": "bubble",
+  "size": "giga",
+  "body": {
+    "type": "box",
+    "layout": "vertical",
+    "contents": [
+      {
+        "type": "text",
+        "text": "🎉 โปรโมชั่นพิเศษ!",
+        "weight": "bold",
+        "size": "xl",
+        "color": "#1DB446"
+      },
+      {
+        "type": "text",
+        "text": "รับส่วนลด 20% สำหรับสมาชิกใหม่",
+        "margin": "md",
+        "wrap": true
+      }
+    ],
+    "backgroundColor": "#FFFFFF",
+    "paddingAll": "20px"
+  }
+}`;
+
+  return (
+    <div className="border-2 border-blue-200 rounded-xl bg-blue-50/50 overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 bg-blue-100">
+        <span className="px-3 py-1 bg-blue-500 text-white text-sm font-medium rounded-full">
+          ข้อความที่ {index + 1}
+        </span>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={onMoveUp}
+            disabled={index === 0}
+            className={`p-1.5 rounded-lg transition-colors ${
+              index === 0 
+                ? 'text-gray-300 cursor-not-allowed' 
+                : 'text-blue-600 hover:bg-blue-200'
+            }`}
+            title="ขึ้น"
+          >
+            <FiChevronUp className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onMoveDown}
+            disabled={index === total - 1}
+            className={`p-1.5 rounded-lg transition-colors ${
+              index === total - 1 
+                ? 'text-gray-300 cursor-not-allowed' 
+                : 'text-blue-600 hover:bg-blue-200'
+            }`}
+            title="ลง"
+          >
+            <FiChevronDown className="w-4 h-4" />
+          </button>
+          <button
+            type="button"
+            onClick={onDelete}
+            className="p-1.5 text-red-500 hover:bg-red-100 rounded-lg transition-colors ml-2"
+            title="ลบ"
+          >
+            <FiTrash2 className="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+
+      {/* Content */}
+      <div className="p-4 space-y-4">
+        {/* Message Type Selection */}
+        <div className="grid grid-cols-3 gap-2">
+          <button
+            type="button"
+            onClick={() => handleTypeChange('text')}
+            className={`flex items-center justify-center gap-2 py-3 rounded-lg border-2 transition-all ${
+              box.type === 'text' 
+                ? 'border-blue-500 bg-white text-blue-600' 
+                : 'border-gray-200 bg-white hover:border-gray-300'
+            }`}
+          >
+            <FiMessageCircle className="w-4 h-4" />
+            <span className="text-sm font-medium">ข้อความ</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTypeChange('image')}
+            className={`flex items-center justify-center gap-2 py-3 rounded-lg border-2 transition-all ${
+              box.type === 'image' 
+                ? 'border-blue-500 bg-white text-blue-600' 
+                : 'border-gray-200 bg-white hover:border-gray-300'
+            }`}
+          >
+            <FiImage className="w-4 h-4" />
+            <span className="text-sm font-medium">รูปภาพ</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleTypeChange('flex')}
+            className={`flex items-center justify-center gap-2 py-3 rounded-lg border-2 transition-all ${
+              box.type === 'flex' 
+                ? 'border-blue-500 bg-white text-blue-600' 
+                : 'border-gray-200 bg-white hover:border-gray-300'
+            }`}
+          >
+            <FiCode className="w-4 h-4" />
+            <span className="text-sm font-medium">Flex Message</span>
+          </button>
+        </div>
+
+        {/* Text Input */}
+        {box.type === 'text' && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              <FiMessageCircle className="w-4 h-4 inline mr-1" />
+              ข้อความ
+            </label>
+            <textarea
+              value={box.content}
+              onChange={(e) => onUpdate({ ...box, content: e.target.value })}
+              className="input w-full"
+              rows={4}
+              placeholder="พิมพ์ข้อความที่ต้องการส่ง..."
+              maxLength={5000}
+            />
+            <p className="text-xs text-gray-500 mt-1 text-right">{box.content.length}/5000</p>
+          </div>
+        )}
+
+        {/* Image Input */}
+        {box.type === 'image' && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              <FiImage className="w-4 h-4 inline mr-1" />
+              URL รูปภาพ
+            </label>
+            <input
+              type="url"
+              value={box.imageUrl}
+              onChange={(e) => onUpdate({ ...box, imageUrl: e.target.value })}
+              className="input w-full"
+              placeholder="https://example.com/image.jpg"
+            />
+            <p className="text-xs text-gray-500 mt-1">รองรับ JPEG, PNG ขนาดไม่เกิน 10MB</p>
+            {box.imageUrl && (
+              <div className="mt-2">
+                <img 
+                  src={box.imageUrl} 
+                  alt="Preview" 
+                  className="max-h-32 rounded-lg border border-gray-200"
+                  onError={(e) => {
+                    (e.target as HTMLImageElement).style.display = 'none';
+                  }}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Flex Input */}
+        {box.type === 'flex' && (
+          <div className="space-y-3">
+            {/* Flex JSON Editor */}
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label className="block text-sm font-medium text-gray-700">
+                  <FiCode className="w-4 h-4 inline mr-1" />
+                  Flex Message JSON
+                </label>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleFlexChange(sampleFlexSimulator)}
+                    className="text-xs text-blue-600 hover:text-blue-700 hover:underline"
+                  >
+                    ใส่ตัวอย่าง
+                  </button>
+                  {box.flexJson && box.validation.valid && (
+                    <button
+                      type="button"
+                      onClick={() => setShowPreview(true)}
+                      className="text-xs text-green-600 hover:text-green-700 flex items-center gap-1"
+                    >
+                      <FiEye className="w-3 h-3" />
+                      ดูตัวอย่าง
+                    </button>
+                  )}
+                </div>
+              </div>
+              <textarea
+                value={box.flexJson}
+                onChange={(e) => handleFlexChange(e.target.value)}
+                className={`input w-full font-mono text-sm ${
+                  box.flexJson && !box.validation.valid ? 'border-red-500 focus:ring-red-500' : ''
+                }`}
+                rows={8}
+                placeholder={`วาง Flex JSON จาก LINE Flex Message Simulator\n{\n  "type": "bubble",\n  "body": {...}\n}`}
+              />
+              
+              {/* Validation Status */}
+              {box.flexJson && (
+                <div className={`mt-2 p-2 rounded-lg text-sm flex items-center gap-2 ${
+                  box.validation.valid 
+                    ? 'bg-green-50 text-green-700' 
+                    : 'bg-red-50 text-red-700'
+                }`}>
+                  {box.validation.valid ? (
+                    <>
+                      <FiCheckCircle className="w-4 h-4" />
+                      <span>JSON ถูกต้อง ✓</span>
+                    </>
+                  ) : (
+                    <>
+                      <FiXCircle className="w-4 h-4" />
+                      <span>{box.validation.error}</span>
+                    </>
+                  )}
+                </div>
+              )}
+              
+              <p className="text-xs text-gray-500 mt-2">
+                💡 วาง Flex Message JSON ที่สร้างจาก{' '}
+                <a 
+                  href="https://developers.line.biz/flex-simulator/" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-green-600 hover:underline"
+                >
+                  LINE Flex Message Simulator
+                </a>
+                {' '}ได้โดยตรง (ไม่ต้องมี "type": "flex")
+              </p>
+            </div>
+
+            {/* Alt Text */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                <FiInfo className="w-4 h-4 inline mr-1" />
+                Alt Text (ข้อความแสดงแทน)
+              </label>
+              <input
+                type="text"
+                value={box.altText}
+                onChange={(e) => onUpdate({ ...box, altText: e.target.value })}
+                className="input w-full"
+                placeholder="ข้อความที่แสดงในการแจ้งเตือน"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                ข้อความที่จะแสดงในการแจ้งเตือนและเมื่อไม่สามารถแสดง Flex ได้
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Flex Preview Modal */}
+      <FlexPreviewModal
+        isOpen={showPreview}
+        onClose={() => setShowPreview(false)}
+        flexJson={box.flexJson}
+        altText={box.altText}
+      />
+    </div>
+  );
+};
+
 export default function BroadcastPage() {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
@@ -52,18 +474,22 @@ export default function BroadcastPage() {
   const [sending, setSending] = useState(false);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [userCount, setUserCount] = useState<number>(0);
-  const [jsonError, setJsonError] = useState<string>('');
   
-  const [form, setForm] = useState({
-    channel_id: '',
-    broadcast_type: 'push' as 'official' | 'push',
-    message_type: 'text' as 'text' | 'image' | 'flex',
-    content: '',
-    image_url: '',
-    flex_json: '',
-    limit: 0, // 0 = ส่งทั้งหมด
-    delay_ms: 100
-  });
+  // Form state
+  const [channelId, setChannelId] = useState('');
+  const [broadcastType, setBroadcastType] = useState<'official' | 'push'>('push');
+  const [limit, setLimit] = useState(0);
+  const [messageBoxes, setMessageBoxes] = useState<MessageBox[]>([
+    {
+      id: generateId(),
+      type: 'text',
+      content: '',
+      imageUrl: '',
+      flexJson: '',
+      altText: '',
+      validation: { valid: true, error: '' }
+    }
+  ]);
 
   useEffect(() => {
     fetchBroadcasts();
@@ -71,34 +497,12 @@ export default function BroadcastPage() {
   }, []);
 
   useEffect(() => {
-    if (form.channel_id) {
-      fetchUserCount(form.channel_id);
+    if (channelId) {
+      fetchUserCount(channelId);
     } else {
       setUserCount(0);
     }
-  }, [form.channel_id]);
-
-  // Validate Flex JSON
-  useEffect(() => {
-    if (form.message_type === 'flex' && form.flex_json) {
-      try {
-        const parsed = JSON.parse(form.flex_json);
-        if (!parsed.type || parsed.type !== 'flex') {
-          setJsonError('JSON ต้องมี "type": "flex"');
-        } else if (!parsed.altText) {
-          setJsonError('JSON ต้องมี "altText"');
-        } else if (!parsed.contents) {
-          setJsonError('JSON ต้องมี "contents"');
-        } else {
-          setJsonError('');
-        }
-      } catch (e) {
-        setJsonError('JSON ไม่ถูกต้อง');
-      }
-    } else {
-      setJsonError('');
-    }
-  }, [form.flex_json, form.message_type]);
+  }, [channelId]);
 
   const fetchBroadcasts = async () => {
     try {
@@ -126,9 +530,9 @@ export default function BroadcastPage() {
     }
   };
 
-  const fetchUserCount = async (channelId: string) => {
+  const fetchUserCount = async (chId: string) => {
     try {
-      const res = await fetch(`/api/broadcast/user-count?channel_id=${channelId}`);
+      const res = await fetch(`/api/broadcast/user-count?channel_id=${chId}`);
       const data = await res.json();
       if (data.success) {
         setUserCount(data.data.count);
@@ -138,53 +542,106 @@ export default function BroadcastPage() {
     }
   };
 
+  // Message Box handlers
+  const addMessageBox = () => {
+    if (messageBoxes.length >= 5) {
+      Swal.fire({ 
+        icon: 'warning', 
+        title: 'เกินจำนวนที่กำหนด', 
+        text: 'สามารถส่งได้สูงสุด 5 ข้อความต่อครั้ง' 
+      });
+      return;
+    }
+    setMessageBoxes([
+      ...messageBoxes,
+      {
+        id: generateId(),
+        type: 'text',
+        content: '',
+        imageUrl: '',
+        flexJson: '',
+        altText: '',
+        validation: { valid: true, error: '' }
+      }
+    ]);
+  };
+
+  const updateMessageBox = (index: number, box: MessageBox) => {
+    const newBoxes = [...messageBoxes];
+    newBoxes[index] = box;
+    setMessageBoxes(newBoxes);
+  };
+
+  const deleteMessageBox = (index: number) => {
+    if (messageBoxes.length <= 1) {
+      Swal.fire({ icon: 'warning', title: 'ต้องมีอย่างน้อย 1 ข้อความ' });
+      return;
+    }
+    const newBoxes = messageBoxes.filter((_, i) => i !== index);
+    setMessageBoxes(newBoxes);
+  };
+
+  const moveMessageBox = (index: number, direction: 'up' | 'down') => {
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= messageBoxes.length) return;
+    
+    const newBoxes = [...messageBoxes];
+    [newBoxes[index], newBoxes[newIndex]] = [newBoxes[newIndex], newBoxes[index]];
+    setMessageBoxes(newBoxes);
+  };
+
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!form.channel_id) {
+    if (!channelId) {
       Swal.fire({ icon: 'warning', title: 'กรุณาเลือก Channel' });
       return;
     }
 
-    if (form.message_type === 'text' && !form.content.trim()) {
-      Swal.fire({ icon: 'warning', title: 'กรุณาใส่ข้อความ' });
+    // Validate all message boxes
+    const errors: string[] = [];
+    messageBoxes.forEach((box, i) => {
+      if (box.type === 'text' && !box.content.trim()) {
+        errors.push(`ข้อความที่ ${i + 1}: กรุณาใส่ข้อความ`);
+      }
+      if (box.type === 'image' && !box.imageUrl.trim()) {
+        errors.push(`ข้อความที่ ${i + 1}: กรุณาใส่ URL รูปภาพ`);
+      }
+      if (box.type === 'flex') {
+        if (!box.flexJson.trim()) {
+          errors.push(`ข้อความที่ ${i + 1}: กรุณาใส่ Flex JSON`);
+        } else if (!box.validation.valid) {
+          errors.push(`ข้อความที่ ${i + 1}: ${box.validation.error}`);
+        }
+      }
+    });
+
+    if (errors.length > 0) {
+      Swal.fire({ 
+        icon: 'warning', 
+        title: 'ข้อมูลไม่ครบถ้วน', 
+        html: errors.map(e => `• ${e}`).join('<br/>') 
+      });
       return;
     }
 
-    if (form.message_type === 'image' && !form.image_url.trim()) {
-      Swal.fire({ icon: 'warning', title: 'กรุณาใส่ URL รูปภาพ' });
-      return;
-    }
-
-    if (form.message_type === 'flex') {
-      if (!form.flex_json.trim()) {
-        Swal.fire({ icon: 'warning', title: 'กรุณาใส่ Flex JSON' });
-        return;
-      }
-      if (jsonError) {
-        Swal.fire({ icon: 'warning', title: 'Flex JSON ไม่ถูกต้อง', text: jsonError });
-        return;
-      }
-    }
-
-    const channel = channels.find(c => c.id === form.channel_id);
-    const maxCount = form.broadcast_type === 'official' 
+    const channel = channels.find(c => c.id === channelId);
+    const maxCount = broadcastType === 'official' 
       ? channel?.followers_count || 0 
       : userCount;
-    const targetCount = form.limit > 0 ? Math.min(form.limit, maxCount) : maxCount;
+    const targetCount = limit > 0 ? Math.min(limit, maxCount) : maxCount;
     
     const result = await Swal.fire({
       title: 'ยืนยันการส่ง Broadcast',
       html: `
         <div class="text-left space-y-2">
           <p><strong>Channel:</strong> ${channel?.channel_name}</p>
-          <p><strong>ประเภท:</strong> ${form.broadcast_type === 'official' ? '📢 Broadcast ปกติ' : '🚀 Push Broadcast (ฟรี)'}</p>
-          <p><strong>ข้อความ:</strong> ${form.message_type === 'text' ? 'ข้อความ' : form.message_type === 'image' ? 'รูปภาพ' : 'Flex Message'}</p>
+          <p><strong>ประเภท:</strong> ${broadcastType === 'official' ? '📢 Broadcast ปกติ' : '🚀 Push Broadcast (ฟรี)'}</p>
+          <p><strong>จำนวนข้อความ:</strong> ${messageBoxes.length} ข้อความ</p>
           <p><strong>จำนวนเป้าหมาย:</strong> ${targetCount.toLocaleString()} / ${maxCount.toLocaleString()} คน</p>
-          ${form.broadcast_type === 'push' ? `
+          ${broadcastType === 'push' ? `
             <div class="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm">
               <p class="text-green-700">✅ <strong>ฟรี!</strong> ไม่เสียค่าส่ง</p>
-              <p class="text-green-600 mt-1">ส่งเรียงตามวันที่ทักมา (คนแรก → คนที่ ${targetCount.toLocaleString()})</p>
             </div>
           ` : `
             <div class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
@@ -212,20 +669,33 @@ export default function BroadcastPage() {
       });
 
       try {
-        let content = form.content;
-        if (form.message_type === 'image') content = form.image_url;
-        if (form.message_type === 'flex') content = form.flex_json;
+        // Prepare messages
+        const messages = messageBoxes.map(box => {
+          if (box.type === 'text') {
+            return { type: 'text', content: box.content };
+          }
+          if (box.type === 'image') {
+            return { type: 'image', content: box.imageUrl };
+          }
+          if (box.type === 'flex') {
+            return { 
+              type: 'flex', 
+              content: box.flexJson,
+              altText: box.altText || 'Flex Message'
+            };
+          }
+          return null;
+        }).filter(Boolean);
 
         const res = await fetch('/api/broadcast/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            channel_id: form.channel_id,
-            broadcast_type: form.broadcast_type,
-            message_type: form.message_type,
-            content: content,
-            limit: form.limit > 0 ? form.limit : 0,
-            delay_ms: form.delay_ms
+            channel_id: channelId,
+            broadcast_type: broadcastType,
+            messages: messages,
+            limit: limit > 0 ? limit : 0,
+            delay_ms: 100
           })
         });
 
@@ -285,17 +755,20 @@ export default function BroadcastPage() {
   };
 
   const resetForm = () => {
-    setForm({
-      channel_id: '',
-      broadcast_type: 'push',
-      message_type: 'text',
-      content: '',
-      image_url: '',
-      flex_json: '',
-      limit: 0,
-      delay_ms: 100
-    });
-    setJsonError('');
+    setChannelId('');
+    setBroadcastType('push');
+    setLimit(0);
+    setMessageBoxes([
+      {
+        id: generateId(),
+        type: 'text',
+        content: '',
+        imageUrl: '',
+        flexJson: '',
+        altText: '',
+        validation: { valid: true, error: '' }
+      }
+    ]);
   };
 
   const filteredBroadcasts = broadcasts.filter(b => 
@@ -318,34 +791,9 @@ export default function BroadcastPage() {
   const messageTypeConfig: Record<string, { label: string; color: string }> = {
     text: { label: 'ข้อความ', color: 'bg-gray-100 text-gray-700' },
     image: { label: 'รูปภาพ', color: 'bg-purple-100 text-purple-700' },
-    flex: { label: 'Flex', color: 'bg-orange-100 text-orange-700' }
+    flex: { label: 'Flex', color: 'bg-orange-100 text-orange-700' },
+    multi: { label: 'หลายข้อความ', color: 'bg-indigo-100 text-indigo-700' }
   };
-
-  // Sample Flex JSON
-  const sampleFlexJson = `{
-  "type": "flex",
-  "altText": "ข้อความโปรโมชั่น",
-  "contents": {
-    "type": "bubble",
-    "body": {
-      "type": "box",
-      "layout": "vertical",
-      "contents": [
-        {
-          "type": "text",
-          "text": "🎉 โปรโมชั่นพิเศษ!",
-          "weight": "bold",
-          "size": "xl"
-        },
-        {
-          "type": "text",
-          "text": "รายละเอียดโปรโมชั่น...",
-          "margin": "md"
-        }
-      ]
-    }
-  }
-}`;
 
   if (loading) {
     return (
@@ -380,7 +828,7 @@ export default function BroadcastPage() {
               <h3 className="font-semibold text-green-800">🚀 Push Broadcast (แนะนำ)</h3>
               <p className="text-sm text-green-600 mt-1">
                 <strong>ฟรี 100%!</strong> ส่งไปหาคนที่เคยทักมาหา Channel<br/>
-                <span className="text-green-500">• ไม่เสียค่าส่ง • รองรับ Flex Message</span>
+                <span className="text-green-500">• ไม่เสียค่าส่ง • รองรับ Flex Message • ส่งได้สูงสุด 5 ข้อความ</span>
               </p>
             </div>
           </div>
@@ -490,23 +938,23 @@ export default function BroadcastPage() {
       {/* Compose Modal */}
       {showCompose && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto animate-fadeIn">
-            <div className="flex items-center justify-between p-6 border-b border-gray-100">
+          <div className="bg-white rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-y-auto animate-fadeIn">
+            <div className="flex items-center justify-between p-6 border-b border-gray-100 sticky top-0 bg-white z-10">
               <h2 className="text-lg font-bold text-gray-900">สร้าง Broadcast</h2>
               <button onClick={() => { setShowCompose(false); resetForm(); }} className="p-2 hover:bg-gray-100 rounded-lg">
-                <FiXCircle className="w-5 h-5" />
+                <FiX className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSend} className="p-6 space-y-4">
+            <form onSubmit={handleSend} className="p-6 space-y-6">
               {/* Channel Select */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   เลือก LINE OA <span className="text-red-500">*</span>
                 </label>
                 <select
-                  value={form.channel_id}
-                  onChange={(e) => setForm({ ...form, channel_id: e.target.value })}
+                  value={channelId}
+                  onChange={(e) => setChannelId(e.target.value)}
                   className="input w-full"
                   required
                 >
@@ -525,41 +973,41 @@ export default function BroadcastPage() {
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     type="button"
-                    onClick={() => setForm({ ...form, broadcast_type: 'push' })}
+                    onClick={() => setBroadcastType('push')}
                     className={`p-4 rounded-xl border-2 text-left transition-all ${
-                      form.broadcast_type === 'push' ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-gray-300'
+                      broadcastType === 'push' ? 'border-green-500 bg-green-50' : 'border-gray-200 hover:border-gray-300'
                     }`}
                   >
                     <div className="flex items-center gap-2 mb-1">
-                      <FiZap className={`w-5 h-5 ${form.broadcast_type === 'push' ? 'text-green-600' : 'text-gray-400'}`} />
-                      <span className={`font-semibold ${form.broadcast_type === 'push' ? 'text-green-700' : 'text-gray-700'}`}>
+                      <FiZap className={`w-5 h-5 ${broadcastType === 'push' ? 'text-green-600' : 'text-gray-400'}`} />
+                      <span className={`font-semibold ${broadcastType === 'push' ? 'text-green-700' : 'text-gray-700'}`}>
                         Push Broadcast
                       </span>
                       <span className="px-1.5 py-0.5 bg-green-500 text-white text-xs rounded">ฟรี!</span>
                     </div>
                     <p className="text-xs text-gray-500">ส่งเฉพาะคนที่ทักมา</p>
-                    {form.channel_id && (
+                    {channelId && (
                       <p className="text-xs text-green-600 mt-1 font-medium">👥 ส่งได้ {userCount.toLocaleString()} คน</p>
                     )}
                   </button>
                   
                   <button
                     type="button"
-                    onClick={() => setForm({ ...form, broadcast_type: 'official' })}
+                    onClick={() => setBroadcastType('official')}
                     className={`p-4 rounded-xl border-2 text-left transition-all ${
-                      form.broadcast_type === 'official' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                      broadcastType === 'official' ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
                     }`}
                   >
                     <div className="flex items-center gap-2 mb-1">
-                      <FiDollarSign className={`w-5 h-5 ${form.broadcast_type === 'official' ? 'text-blue-600' : 'text-gray-400'}`} />
-                      <span className={`font-semibold ${form.broadcast_type === 'official' ? 'text-blue-700' : 'text-gray-700'}`}>
+                      <FiDollarSign className={`w-5 h-5 ${broadcastType === 'official' ? 'text-blue-600' : 'text-gray-400'}`} />
+                      <span className={`font-semibold ${broadcastType === 'official' ? 'text-blue-700' : 'text-gray-700'}`}>
                         Broadcast ปกติ
                       </span>
                     </div>
                     <p className="text-xs text-gray-500">ใช้โควต้า LINE OA</p>
-                    {form.channel_id && (
+                    {channelId && (
                       <p className="text-xs text-blue-600 mt-1 font-medium">
-                        👥 {channels.find(c => c.id === form.channel_id)?.followers_count?.toLocaleString() || 0} คน
+                        👥 {channels.find(c => c.id === channelId)?.followers_count?.toLocaleString() || 0} คน
                       </p>
                     )}
                   </button>
@@ -567,7 +1015,7 @@ export default function BroadcastPage() {
               </div>
 
               {/* Limit (Push only) */}
-              {form.broadcast_type === 'push' && form.channel_id && (
+              {broadcastType === 'push' && channelId && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     <FiHash className="w-4 h-4 inline mr-1" />
@@ -576,8 +1024,8 @@ export default function BroadcastPage() {
                   <div className="flex items-center gap-3">
                     <input
                       type="number"
-                      value={form.limit || ''}
-                      onChange={(e) => setForm({ ...form, limit: parseInt(e.target.value) || 0 })}
+                      value={limit || ''}
+                      onChange={(e) => setLimit(parseInt(e.target.value) || 0)}
                       className="input w-32"
                       placeholder="ทั้งหมด"
                       min={0}
@@ -585,9 +1033,9 @@ export default function BroadcastPage() {
                     />
                     <span className="text-sm text-gray-500">
                       / {userCount.toLocaleString()} คน
-                      {form.limit > 0 && form.limit <= userCount && (
+                      {limit > 0 && limit <= userCount && (
                         <span className="text-green-600 ml-2">
-                          (ส่งคนที่ 1 - {form.limit.toLocaleString()})
+                          (ส่งคนที่ 1 - {limit.toLocaleString()})
                         </span>
                       )}
                     </span>
@@ -598,121 +1046,43 @@ export default function BroadcastPage() {
                 </div>
               )}
 
-              {/* Message Type */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">ประเภทข้อความ</label>
-                <div className="flex gap-3 flex-wrap">
-                  <label className={`flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 transition-all ${
-                    form.message_type === 'text' ? 'border-green-500 bg-green-50' : 'border-gray-200'
-                  }`}>
-                    <input
-                      type="radio"
-                      name="message_type"
-                      checked={form.message_type === 'text'}
-                      onChange={() => setForm({ ...form, message_type: 'text' })}
-                      className="hidden"
-                    />
-                    <FiMessageCircle className="w-4 h-4" />
-                    ข้อความ
+              {/* Message Boxes */}
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <label className="block text-sm font-medium text-gray-700">
+                    ข้อความที่ต้องการส่ง <span className="text-red-500">*</span>
                   </label>
-                  <label className={`flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 transition-all ${
-                    form.message_type === 'image' ? 'border-green-500 bg-green-50' : 'border-gray-200'
-                  }`}>
-                    <input
-                      type="radio"
-                      name="message_type"
-                      checked={form.message_type === 'image'}
-                      onChange={() => setForm({ ...form, message_type: 'image' })}
-                      className="hidden"
-                    />
-                    <FiImage className="w-4 h-4" />
-                    รูปภาพ
-                  </label>
-                  <label className={`flex items-center gap-2 cursor-pointer px-4 py-2 rounded-lg border-2 transition-all ${
-                    form.message_type === 'flex' ? 'border-green-500 bg-green-50' : 'border-gray-200'
-                  }`}>
-                    <input
-                      type="radio"
-                      name="message_type"
-                      checked={form.message_type === 'flex'}
-                      onChange={() => setForm({ ...form, message_type: 'flex' })}
-                      className="hidden"
-                    />
-                    <FiCode className="w-4 h-4" />
-                    Flex Message
-                  </label>
+                  <span className="text-sm text-gray-500">{messageBoxes.length}/5 ข้อความ</span>
                 </div>
+
+                {messageBoxes.map((box, index) => (
+                  <MessageBoxCard
+                    key={box.id}
+                    box={box}
+                    index={index}
+                    total={messageBoxes.length}
+                    onUpdate={(updatedBox) => updateMessageBox(index, updatedBox)}
+                    onDelete={() => deleteMessageBox(index)}
+                    onMoveUp={() => moveMessageBox(index, 'up')}
+                    onMoveDown={() => moveMessageBox(index, 'down')}
+                  />
+                ))}
+
+                {/* Add Message Button */}
+                {messageBoxes.length < 5 && (
+                  <button
+                    type="button"
+                    onClick={addMessageBox}
+                    className="w-full py-3 border-2 border-dashed border-gray-300 rounded-xl text-gray-500 hover:border-green-500 hover:text-green-600 transition-colors flex items-center justify-center gap-2"
+                  >
+                    <FiPlus className="w-5 h-5" />
+                    เพิ่มข้อความ
+                  </button>
+                )}
               </div>
 
-              {/* Content based on type */}
-              {form.message_type === 'text' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    ข้อความ <span className="text-red-500">*</span>
-                  </label>
-                  <textarea
-                    value={form.content}
-                    onChange={(e) => setForm({ ...form, content: e.target.value })}
-                    className="input w-full"
-                    rows={5}
-                    placeholder="พิมพ์ข้อความที่ต้องการส่ง..."
-                    maxLength={5000}
-                  />
-                  <p className="text-xs text-gray-500 mt-1 text-right">{form.content.length}/5000</p>
-                </div>
-              )}
-
-              {form.message_type === 'image' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    URL รูปภาพ <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="url"
-                    value={form.image_url}
-                    onChange={(e) => setForm({ ...form, image_url: e.target.value })}
-                    className="input w-full"
-                    placeholder="https://example.com/image.jpg"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">รองรับ JPEG, PNG ขนาดไม่เกิน 10MB</p>
-                </div>
-              )}
-
-              {form.message_type === 'flex' && (
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="block text-sm font-medium text-gray-700">
-                      Flex Message JSON <span className="text-red-500">*</span>
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => setForm({ ...form, flex_json: sampleFlexJson })}
-                      className="text-xs text-green-600 hover:text-green-700"
-                    >
-                      ใส่ตัวอย่าง
-                    </button>
-                  </div>
-                  <textarea
-                    value={form.flex_json}
-                    onChange={(e) => setForm({ ...form, flex_json: e.target.value })}
-                    className={`input w-full font-mono text-sm ${jsonError ? 'border-red-500' : ''}`}
-                    rows={10}
-                    placeholder='{"type": "flex", "altText": "...", "contents": {...}}'
-                  />
-                  {jsonError && (
-                    <p className="text-xs text-red-500 mt-1">❌ {jsonError}</p>
-                  )}
-                  <p className="text-xs text-gray-500 mt-1">
-                    สร้าง Flex Message ได้ที่{' '}
-                    <a href="https://developers.line.biz/flex-simulator/" target="_blank" className="text-green-600 hover:underline">
-                      LINE Flex Message Simulator
-                    </a>
-                  </p>
-                </div>
-              )}
-
               {/* Info Box */}
-              {form.broadcast_type === 'push' && (
+              {broadcastType === 'push' && (
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg">
                   <div className="flex items-start gap-2">
                     <FiAlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
@@ -722,6 +1092,7 @@ export default function BroadcastPage() {
                         <li>• ส่งได้เฉพาะคนที่เคยทักมาหา Channel นี้</li>
                         <li>• ไม่สามารถดึง followers ที่ไม่ทักมาได้ (LINE API ไม่รองรับ)</li>
                         <li>• ระบบส่งแบบ batch 500 คน/ครั้ง ป้องกัน rate limit</li>
+                        <li>• ส่งได้สูงสุด 5 ข้อความต่อครั้ง</li>
                       </ul>
                     </div>
                   </div>
@@ -729,7 +1100,7 @@ export default function BroadcastPage() {
               )}
 
               {/* Actions */}
-              <div className="flex gap-3 pt-4">
+              <div className="flex gap-3 pt-4 sticky bottom-0 bg-white py-4 -mx-6 px-6 border-t border-gray-100">
                 <button
                   type="button"
                   onClick={() => { setShowCompose(false); resetForm(); }}

@@ -8,6 +8,66 @@ import mongoose from 'mongoose';
 // Delay function
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
+// Interface สำหรับ message
+interface MessageInput {
+  type: 'text' | 'image' | 'flex';
+  content: string;
+  altText?: string;
+}
+
+// แปลง Flex JSON จาก LINE Simulator format เป็น LINE API format
+const convertFlexMessage = (content: string, altText: string = 'Flex Message'): any => {
+  try {
+    const parsed = JSON.parse(content);
+    
+    // ถ้าเป็นรูปแบบจาก LINE Simulator (type: bubble หรือ carousel)
+    if (parsed.type === 'bubble' || parsed.type === 'carousel') {
+      return {
+        type: 'flex',
+        altText: altText,
+        contents: parsed
+      };
+    }
+    
+    // ถ้าเป็นรูปแบบเต็ม (type: flex)
+    if (parsed.type === 'flex') {
+      return {
+        type: 'flex',
+        altText: parsed.altText || altText,
+        contents: parsed.contents
+      };
+    }
+    
+    throw new Error('Invalid Flex JSON format');
+  } catch (e: any) {
+    throw new Error(`Flex JSON error: ${e.message}`);
+  }
+};
+
+// แปลง message input เป็น LINE message object
+const convertToLineMessage = (msg: MessageInput): any => {
+  if (msg.type === 'text') {
+    return {
+      type: 'text',
+      text: msg.content
+    };
+  }
+  
+  if (msg.type === 'image') {
+    return {
+      type: 'image',
+      originalContentUrl: msg.content,
+      previewImageUrl: msg.content
+    };
+  }
+  
+  if (msg.type === 'flex') {
+    return convertFlexMessage(msg.content, msg.altText);
+  }
+  
+  throw new Error(`Unknown message type: ${msg.type}`);
+};
+
 // POST - ส่ง Broadcast
 export async function POST(request: NextRequest) {
   try {
@@ -27,14 +87,16 @@ export async function POST(request: NextRequest) {
     const { 
       channel_id, 
       broadcast_type, // 'official' | 'push'
-      message_type,   // 'text' | 'image' | 'flex'
+      messages,       // Array of { type, content, altText? }
+      // Legacy support - single message
+      message_type,
       content,
-      limit = 0,      // จำนวนที่ต้องการส่ง (0 = ทั้งหมด)
-      delay_ms = 100  // delay ระหว่าง batch (default 100ms)
+      limit = 0,
+      delay_ms = 100
     } = body;
 
-    if (!channel_id || !content) {
-      return NextResponse.json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบ' }, { status: 400 });
+    if (!channel_id) {
+      return NextResponse.json({ success: false, message: 'กรุณาเลือก Channel' }, { status: 400 });
     }
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
@@ -62,32 +124,50 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // สร้าง LINE message object
-    let lineMessage: any;
+    // สร้าง LINE message objects
+    let lineMessages: any[] = [];
     
-    if (message_type === 'flex') {
-      // Parse Flex JSON
-      try {
-        const flexData = JSON.parse(content);
-        lineMessage = {
-          type: 'flex',
-          altText: flexData.altText || 'Flex Message',
-          contents: flexData.contents
-        };
-      } catch (e) {
-        return NextResponse.json({ success: false, message: 'Flex JSON ไม่ถูกต้อง' }, { status: 400 });
+    // ถ้าส่งมาแบบ multi-messages (array)
+    if (messages && Array.isArray(messages) && messages.length > 0) {
+      if (messages.length > 5) {
+        return NextResponse.json({ 
+          success: false, 
+          message: 'ส่งได้สูงสุด 5 ข้อความต่อครั้ง' 
+        }, { status: 400 });
       }
-    } else if (message_type === 'image') {
-      lineMessage = {
-        type: 'image',
-        originalContentUrl: content,
-        previewImageUrl: content
-      };
-    } else {
-      lineMessage = {
-        type: 'text',
-        text: content
-      };
+      
+      for (const msg of messages) {
+        try {
+          const lineMsg = convertToLineMessage(msg);
+          lineMessages.push(lineMsg);
+        } catch (e: any) {
+          return NextResponse.json({ 
+            success: false, 
+            message: e.message 
+          }, { status: 400 });
+        }
+      }
+    } 
+    // Legacy support - single message
+    else if (content && message_type) {
+      try {
+        const lineMsg = convertToLineMessage({ 
+          type: message_type, 
+          content: content 
+        });
+        lineMessages.push(lineMsg);
+      } catch (e: any) {
+        return NextResponse.json({ 
+          success: false, 
+          message: e.message 
+        }, { status: 400 });
+      }
+    }
+    else {
+      return NextResponse.json({ 
+        success: false, 
+        message: 'กรุณาระบุข้อความที่ต้องการส่ง' 
+      }, { status: 400 });
     }
 
     let sentCount = 0;
@@ -99,7 +179,8 @@ export async function POST(request: NextRequest) {
       // แบบที่ 1: Broadcast ปกติ (ใช้โควต้า LINE OA)
       // ==========================================
       try {
-        await broadcastMessage(channel.channel_access_token, lineMessage);
+        // LINE broadcast API รองรับหลาย messages ใน 1 request
+        await broadcastMessage(channel.channel_access_token, lineMessages);
         
         // นับ followers (ประมาณ)
         targetCount = await LineUser.countDocuments({
@@ -158,14 +239,15 @@ export async function POST(request: NextRequest) {
         batches.push(userIds.slice(i, i + BATCH_SIZE));
       }
 
-      console.log(`📤 [Push Broadcast] Starting: ${targetCount} users in ${batches.length} batches`);
+      console.log(`📤 [Push Broadcast] Starting: ${targetCount} users in ${batches.length} batches, ${lineMessages.length} messages`);
 
       // ส่งทีละ batch
       for (let i = 0; i < batches.length; i++) {
         const batch = batches[i];
         
         try {
-          await multicastMessage(channel.channel_access_token, batch, lineMessage);
+          // LINE multicast API รองรับหลาย messages ใน 1 request
+          await multicastMessage(channel.channel_access_token, batch, lineMessages);
           sentCount += batch.length;
           console.log(`✅ [Push Broadcast] Batch ${i + 1}/${batches.length}: ${batch.length} users sent`);
         } catch (error: any) {
@@ -182,12 +264,42 @@ export async function POST(request: NextRequest) {
       console.log(`📤 [Push Broadcast] Completed: ${sentCount} sent, ${failedCount} failed`);
     }
 
+    // กำหนด message_type สำหรับ record
+    let recordMessageType = 'text';
+    if (lineMessages.length > 1) {
+      recordMessageType = 'multi';
+    } else if (lineMessages[0]?.type === 'flex') {
+      recordMessageType = 'flex';
+    } else if (lineMessages[0]?.type === 'image') {
+      recordMessageType = 'image';
+    }
+
+    // สร้าง content summary
+    let contentSummary = '';
+    if (lineMessages.length === 1) {
+      if (lineMessages[0].type === 'text') {
+        contentSummary = lineMessages[0].text?.substring(0, 500) || '';
+      } else if (lineMessages[0].type === 'flex') {
+        contentSummary = `[Flex Message] ${lineMessages[0].altText || ''}`;
+      } else if (lineMessages[0].type === 'image') {
+        contentSummary = '[รูปภาพ]';
+      }
+    } else {
+      const types = lineMessages.map(m => {
+        if (m.type === 'text') return 'ข้อความ';
+        if (m.type === 'flex') return 'Flex';
+        if (m.type === 'image') return 'รูปภาพ';
+        return m.type;
+      });
+      contentSummary = `[${lineMessages.length} ข้อความ: ${types.join(', ')}]`;
+    }
+
     // บันทึก Broadcast record
     const newBroadcast = new Broadcast({
       channel_id: new mongoose.Types.ObjectId(channel_id),
       broadcast_type: broadcast_type,
-      message_type: message_type || 'text',
-      content: message_type === 'flex' ? '[Flex Message]' : content.substring(0, 500),
+      message_type: recordMessageType,
+      content: contentSummary,
       target_type: 'all',
       target_count: targetCount,
       sent_count: sentCount,
@@ -206,7 +318,8 @@ export async function POST(request: NextRequest) {
         id: newBroadcast._id,
         target_count: targetCount,
         sent_count: sentCount,
-        failed_count: failedCount
+        failed_count: failedCount,
+        message_count: lineMessages.length
       }
     });
 

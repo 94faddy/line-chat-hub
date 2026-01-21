@@ -4,7 +4,7 @@ export interface IBroadcast extends Document {
   _id: Types.ObjectId;
   channel_id: Types.ObjectId;
   broadcast_type: 'official' | 'push'; // official = LINE OA broadcast, push = multicast
-  message_type: 'text' | 'image' | 'template' | 'flex';
+  message_type: 'text' | 'image' | 'template' | 'flex' | 'multi';
   content: string;
   target_type: 'all' | 'segment';
   target_count: number;
@@ -33,7 +33,7 @@ const BroadcastSchema = new Schema<IBroadcast>(
     },
     message_type: {
       type: String,
-      enum: ['text', 'image', 'template', 'flex'],
+      enum: ['text', 'image', 'template', 'flex', 'multi'],
       default: 'text',
     },
     content: {
