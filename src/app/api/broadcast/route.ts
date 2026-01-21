@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
       id: bc._id,
       channel_id: (bc.channel_id as any)?._id,
       channel_name: (bc.channel_id as any)?.channel_name,
+      broadcast_type: bc.broadcast_type || 'push',
       message_type: bc.message_type,
       content: bc.content,
       target_type: bc.target_type,

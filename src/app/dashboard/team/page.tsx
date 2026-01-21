@@ -35,7 +35,6 @@ export default function TeamPage() {
     permissions: {
       can_reply: true,
       can_view_all: false,
-      can_manage_tags: false,
       can_broadcast: false
     }
   });
@@ -44,7 +43,6 @@ export default function TeamPage() {
     permissions: {
       can_reply: true,
       can_view_all: false,
-      can_manage_tags: false,
       can_broadcast: false
     }
   });
@@ -150,7 +148,6 @@ export default function TeamPage() {
       permissions: {
         can_reply: true,
         can_view_all: false,
-        can_manage_tags: false,
         can_broadcast: false
       }
     });
@@ -164,7 +161,6 @@ export default function TeamPage() {
       permissions: {
         can_reply: member.permissions?.can_reply ?? true,
         can_view_all: member.permissions?.can_view_all ?? false,
-        can_manage_tags: member.permissions?.can_manage_tags ?? false,
         can_broadcast: member.permissions?.can_broadcast ?? false
       }
     });
@@ -366,9 +362,6 @@ export default function TeamPage() {
                       {member.permissions?.can_view_all && (
                         <span className="tag bg-purple-100 text-purple-700">ดูทั้งหมด</span>
                       )}
-                      {member.permissions?.can_manage_tags && (
-                        <span className="tag bg-yellow-100 text-yellow-700">จัดการ Tags</span>
-                      )}
                       {member.permissions?.can_broadcast && (
                         <span className="tag bg-orange-100 text-orange-700">Broadcast</span>
                       )}
@@ -498,15 +491,6 @@ export default function TeamPage() {
                     })}
                   />
                   <PermissionCheckbox
-                    label="จัดการ Tags"
-                    description="สามารถสร้าง แก้ไข ลบ Tags ได้"
-                    checked={inviteForm.permissions.can_manage_tags}
-                    onChange={(checked) => setInviteForm({
-                      ...inviteForm,
-                      permissions: { ...inviteForm.permissions, can_manage_tags: checked }
-                    })}
-                  />
-                  <PermissionCheckbox
                     label="ส่ง Broadcast"
                     description="สามารถส่งข้อความไปยังลูกค้าทั้งหมดได้"
                     checked={inviteForm.permissions.can_broadcast}
@@ -606,15 +590,6 @@ export default function TeamPage() {
                     onChange={(checked) => setEditForm({
                       ...editForm,
                       permissions: { ...editForm.permissions, can_view_all: checked }
-                    })}
-                  />
-                  <PermissionCheckbox
-                    label="จัดการ Tags"
-                    description="สามารถสร้าง แก้ไข ลบ Tags ได้"
-                    checked={editForm.permissions.can_manage_tags}
-                    onChange={(checked) => setEditForm({
-                      ...editForm,
-                      permissions: { ...editForm.permissions, can_manage_tags: checked }
                     })}
                   />
                   <PermissionCheckbox

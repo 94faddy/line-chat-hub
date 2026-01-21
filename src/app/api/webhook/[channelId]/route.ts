@@ -311,7 +311,7 @@ async function getOrCreateGroupOrRoom(
           const memberCount = await getGroupMemberCount(accessToken, targetId);
           existing.display_name = groupInfo.groupName || existing.display_name;
           existing.picture_url = groupInfo.pictureUrl || existing.picture_url;
-          existing.member_count = memberCount;
+          existing.member_count = memberCount + 1; // +1 รวม bot
         } catch (e) {
           console.error('❌ [Webhook] Update group info error:', e);
         }
@@ -346,7 +346,7 @@ async function getOrCreateGroupOrRoom(
     source_type: sourceType,
     group_id: sourceType === 'group' ? targetId : undefined,
     room_id: sourceType === 'room' ? targetId : undefined,
-    member_count: memberCount,
+    member_count: memberCount + 1, // +1 รวม bot
     follow_status: 'following',
   });
 

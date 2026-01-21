@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { LineUser, LineChannel, Conversation, AdminPermission } from '@/models';
 import { verifyToken } from '@/lib/auth';
-import { getUserProfile } from '@/lib/line';
+import { getUserProfile, getGroupSummary, getGroupMemberCount } from '@/lib/line';
 import mongoose from 'mongoose';
 
 // POST - Refresh LINE user profile
@@ -61,7 +61,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์' }, { status: 403 });
     }
 
-    // ดึง profile ใหม่จาก LINE
+    // ✅ ตรวจสอบว่าเป็น group หรือ user
+    if (lineUser.source_type === 'group' && lineUser.group_id) {
+      // ดึงข้อมูลกลุ่มจาก LINE
+      try {
+        const groupInfo = await getGroupSummary(channel.channel_access_token, lineUser.group_id);
+        const memberCount = await getGroupMemberCount(channel.channel_access_token, lineUser.group_id);
+        
+        lineUser.display_name = groupInfo.groupName || lineUser.display_name;
+        lineUser.picture_url = groupInfo.pictureUrl || lineUser.picture_url;
+        lineUser.member_count = memberCount + 1; // +1 รวม bot
+        await lineUser.save();
+
+        return NextResponse.json({ 
+          success: true, 
+          message: 'อัพเดทข้อมูลกลุ่มสำเร็จ',
+          data: {
+            display_name: lineUser.display_name,
+            picture_url: lineUser.picture_url,
+            member_count: lineUser.member_count
+          }
+        });
+      } catch (error: any) {
+        console.error('Refresh group info error:', error);
+        return NextResponse.json({ 
+          success: false, 
+          message: 'ไม่สามารถดึงข้อมูลกลุ่มได้' 
+        }, { status: 400 });
+      }
+    }
+
+    // ดึง profile ใหม่จาก LINE (สำหรับ user ปกติ)
     try {
       const profile = await getUserProfile(channel.channel_access_token, lineUser.line_user_id);
       

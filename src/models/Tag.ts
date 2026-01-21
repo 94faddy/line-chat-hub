@@ -1,8 +1,9 @@
+//PATH: src/models/Tag.ts
 import mongoose, { Schema, Document, Model, Types } from 'mongoose';
 
 export interface ITag extends Document {
   _id: Types.ObjectId;
-  user_id: Types.ObjectId;
+  channel_id: Types.ObjectId; // ✅ เปลี่ยนจาก user_id เป็น channel_id
   name: string;
   color: string;
   description?: string;
@@ -12,9 +13,9 @@ export interface ITag extends Document {
 
 const TagSchema = new Schema<ITag>(
   {
-    user_id: {
+    channel_id: {
       type: Schema.Types.ObjectId,
-      ref: 'User',
+      ref: 'LineChannel', // ✅ เปลี่ยนจาก User เป็น LineChannel
       required: true,
       index: true,
     },
@@ -42,8 +43,8 @@ const TagSchema = new Schema<ITag>(
   }
 );
 
-// Unique tag name per user
-TagSchema.index({ user_id: 1, name: 1 }, { unique: true });
+// ✅ Unique tag name per channel (เปลี่ยนจาก user)
+TagSchema.index({ channel_id: 1, name: 1 }, { unique: true });
 
 const Tag: Model<ITag> = mongoose.models.Tag || mongoose.model<ITag>('Tag', TagSchema);
 

@@ -5,7 +5,7 @@ import { useRouter, usePathname } from 'next/navigation';
 import Link from 'next/link';
 import { 
   FiMessageCircle, FiInbox, FiRadio, FiUsers, FiSettings, 
-  FiLogOut, FiMenu, FiX, FiChevronDown, FiPlus, FiTag,
+  FiLogOut, FiMenu, FiX, FiChevronDown, FiPlus,
   FiZap, FiUser
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
@@ -74,7 +74,6 @@ export default function DashboardLayout({
     { href: '/dashboard', icon: FiInbox, label: 'Inbox', badge: 0 },
     { href: '/dashboard/channels', icon: FiRadio, label: 'LINE Channels' },
     { href: '/dashboard/broadcast', icon: FiMessageCircle, label: 'Broadcast' },
-    { href: '/dashboard/tags', icon: FiTag, label: 'Tags' },
     { href: '/dashboard/team', icon: FiUsers, label: 'Team' },
     { href: '/dashboard/settings', icon: FiSettings, label: 'Settings' },
   ];

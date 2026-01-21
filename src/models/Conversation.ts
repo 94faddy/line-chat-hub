@@ -1,3 +1,4 @@
+//PATH: src/models/Conversation.ts
 import mongoose, { Schema, Document, Model, Types } from 'mongoose';
 
 export interface IConversation extends Document {
@@ -11,6 +12,7 @@ export interface IConversation extends Document {
   last_message_at?: Date;
   unread_count: number;
   tags: Types.ObjectId[];
+  notes?: string; // ✅ เพิ่ม notes field
   created_at: Date;
   updated_at: Date;
 }
@@ -59,6 +61,11 @@ const ConversationSchema = new Schema<IConversation>(
       type: Schema.Types.ObjectId,
       ref: 'Tag',
     }],
+    // ✅ เพิ่ม notes field สำหรับเก็บบันทึกภายใน
+    notes: {
+      type: String,
+      default: null,
+    },
   },
   {
     timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },

@@ -1,11 +1,35 @@
+//PATH: src/app/api/tags/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import { Tag } from '@/models';
+import { Tag, LineChannel, AdminPermission } from '@/models';
 import { verifyToken } from '@/lib/auth';
 import mongoose from 'mongoose';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
+}
+
+// ✅ Helper function ตรวจสอบสิทธิ์เข้าถึง Channel
+async function checkChannelAccess(userId: mongoose.Types.ObjectId, channelId: mongoose.Types.ObjectId) {
+  // ตรวจสอบว่าเป็น owner ของ channel หรือไม่
+  const channel = await LineChannel.findOne({
+    _id: channelId,
+    user_id: userId,
+  });
+  
+  if (channel) return true;
+  
+  // ตรวจสอบว่าเป็น admin ที่ได้รับสิทธิ์หรือไม่
+  const permission = await AdminPermission.findOne({
+    admin_id: userId,
+    status: 'active',
+    $or: [
+      { channel_id: channelId },
+      { channel_id: null }
+    ]
+  });
+  
+  return !!permission;
 }
 
 // GET - ดึงข้อมูล Tag
@@ -26,15 +50,22 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    const tag = await Tag.findOne({ _id: id, user_id: userId }).lean();
+    const tag = await Tag.findById(id).lean();
     if (!tag) {
       return NextResponse.json({ success: false, message: 'ไม่พบ Tag' }, { status: 404 });
+    }
+
+    // ตรวจสอบสิทธิ์เข้าถึง channel ของ tag นี้
+    const hasAccess = await checkChannelAccess(userId, tag.channel_id);
+    if (!hasAccess) {
+      return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึง Tag นี้' }, { status: 403 });
     }
 
     return NextResponse.json({
       success: true,
       data: {
         id: tag._id,
+        channel_id: tag.channel_id,
         name: tag.name,
         color: tag.color,
         description: tag.description
@@ -67,9 +98,27 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    const tag = await Tag.findOne({ _id: id, user_id: userId });
+    const tag = await Tag.findById(id);
     if (!tag) {
       return NextResponse.json({ success: false, message: 'ไม่พบ Tag' }, { status: 404 });
+    }
+
+    // ตรวจสอบสิทธิ์เข้าถึง channel ของ tag นี้
+    const hasAccess = await checkChannelAccess(userId, tag.channel_id);
+    if (!hasAccess) {
+      return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์แก้ไข Tag นี้' }, { status: 403 });
+    }
+
+    // ตรวจสอบชื่อซ้ำ (ถ้ามีการเปลี่ยนชื่อ)
+    if (name && name !== tag.name) {
+      const existingTag = await Tag.findOne({ 
+        channel_id: tag.channel_id, 
+        name,
+        _id: { $ne: tag._id }
+      });
+      if (existingTag) {
+        return NextResponse.json({ success: false, message: 'ชื่อ Tag นี้มีอยู่แล้วใน Channel นี้' }, { status: 400 });
+      }
     }
 
     // อัพเดท
@@ -105,9 +154,15 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    const tag = await Tag.findOne({ _id: id, user_id: userId });
+    const tag = await Tag.findById(id);
     if (!tag) {
       return NextResponse.json({ success: false, message: 'ไม่พบ Tag' }, { status: 404 });
+    }
+
+    // ตรวจสอบสิทธิ์เข้าถึง channel ของ tag นี้
+    const hasAccess = await checkChannelAccess(userId, tag.channel_id);
+    if (!hasAccess) {
+      return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์ลบ Tag นี้' }, { status: 403 });
     }
 
     await Tag.findByIdAndDelete(id);

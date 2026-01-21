@@ -7,11 +7,12 @@ import {
   FiSmile, FiPaperclip, FiCheck, FiCheckCircle, FiX,
   FiTag, FiUser, FiMessageCircle, FiInbox, FiZap, FiPlus,
   FiTrash2, FiEdit2, FiBell, FiBellOff, FiDownload, FiExternalLink,
-  FiChevronDown, FiRefreshCw
+  FiChevronDown, FiRefreshCw, FiFileText, FiUserCheck, FiUsers
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 import { FlexMessageRenderer, LinkifyText } from '@/components/FlexMessageRenderer';
 import QuickRepliesPanel from '@/components/QuickRepliesPanel';
+import TagsManager from '@/components/TagsManager';
 
 interface Channel {
   id: string;
@@ -49,6 +50,14 @@ interface QuickReply {
   channel_id?: string;
 }
 
+interface Admin {
+  id: string;
+  name: string;
+  email: string;
+  avatar?: string;
+  role?: string;
+}
+
 interface Conversation {
   id: string;
   channel_id: string;
@@ -60,6 +69,8 @@ interface Conversation {
   channel: Channel;
   line_user: LineUser;
   tags?: Tag[];
+  notes?: string;
+  assigned_to?: Admin;
 }
 
 interface Message {
@@ -540,7 +551,7 @@ export default function InboxPage() {
   const [showShortcutDropdown, setShowShortcutDropdown] = useState(false);
   const [filteredShortcuts, setFilteredShortcuts] = useState<QuickReply[]>([]);
   const [selectedShortcutIndex, setSelectedShortcutIndex] = useState(0);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   
   // SSE connection
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -563,6 +574,14 @@ export default function InboxPage() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [pendingNewMessage, setPendingNewMessage] = useState<Message | null>(null);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
+  
+  // Notes & Assignment states
+  const [showNotesModal, setShowNotesModal] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [editingNotes, setEditingNotes] = useState('');
+  const [channelAdmins, setChannelAdmins] = useState<Admin[]>([]);
+  const [savingNotes, setSavingNotes] = useState(false);
+  const [savingAssign, setSavingAssign] = useState(false);
   const lastScrollTop = useRef(0);
 
   // Scroll to bottom function
@@ -1104,15 +1123,83 @@ export default function InboxPage() {
     }
   };
 
-  const fetchTags = async () => {
+  const fetchTags = async (channelId?: string) => {
     try {
-      const res = await fetch('/api/tags');
+      const url = channelId ? `/api/tags?channel_id=${channelId}` : '/api/tags';
+      const res = await fetch(url);
       const data = await res.json();
       if (data.success) {
         setAllTags(data.data);
       }
     } catch (error) {
       console.error('Error fetching tags:', error);
+    }
+  };
+
+  // Fetch channel admins for assignment dropdown
+  const fetchChannelAdmins = async (channelId: string) => {
+    try {
+      const res = await fetch(`/api/channels/${channelId}/admins`);
+      const data = await res.json();
+      if (data.success) {
+        setChannelAdmins(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching channel admins:', error);
+    }
+  };
+
+  // Save conversation notes
+  const saveNotes = async () => {
+    if (!selectedConversation) return;
+    
+    setSavingNotes(true);
+    try {
+      const res = await fetch(`/api/messages/conversations/${selectedConversation.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ notes: editingNotes }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        // Update local state
+        setSelectedConversation({ ...selectedConversation, notes: editingNotes });
+        setConversations(prev => prev.map(c => 
+          c.id === selectedConversation.id ? { ...c, notes: editingNotes } : c
+        ));
+        setShowNotesModal(false);
+      }
+    } catch (error) {
+      console.error('Error saving notes:', error);
+    } finally {
+      setSavingNotes(false);
+    }
+  };
+
+  // Assign conversation to admin
+  const saveAssignedTo = async (adminId: string | null) => {
+    if (!selectedConversation) return;
+    
+    setSavingAssign(true);
+    try {
+      const res = await fetch(`/api/messages/conversations/${selectedConversation.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ assigned_to: adminId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        const assignedAdmin = adminId ? channelAdmins.find(a => a.id === adminId) : undefined;
+        setSelectedConversation({ ...selectedConversation, assigned_to: assignedAdmin });
+        setConversations(prev => prev.map(c => 
+          c.id === selectedConversation.id ? { ...c, assigned_to: assignedAdmin } : c
+        ));
+        setShowAssignModal(false);
+      }
+    } catch (error) {
+      console.error('Error assigning conversation:', error);
+    } finally {
+      setSavingAssign(false);
     }
   };
 
@@ -1334,6 +1421,50 @@ export default function InboxPage() {
     }
   };
 
+  // ✅ Auto refresh profile (background - ไม่แสดง popup) รองรับทั้ง user และ group
+  const autoRefreshProfile = async (conv: Conversation) => {
+    if (!conv.line_user?.id) return;
+    
+    try {
+      const res = await fetch('/api/messages/refresh-profile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ line_user_id: conv.line_user.id }),
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        // Update state เงียบๆ
+        const updatedLineUser = {
+          ...conv.line_user,
+          display_name: data.data.display_name,
+          picture_url: data.data.picture_url,
+          // ถ้ามี member_count (group) ก็อัพเดทด้วย
+          ...(data.data.member_count !== undefined && { member_count: data.data.member_count })
+        };
+        
+        setSelectedConversation(prev => 
+          prev?.id === conv.id ? { ...prev, line_user: updatedLineUser } : prev
+        );
+        
+        setConversations(prev => prev.map(c => 
+          c.id === conv.id ? { ...c, line_user: updatedLineUser } : c
+        ));
+      }
+    } catch (error) {
+      // Fail silently - ไม่ต้อง alert
+      console.error('Auto refresh profile error:', error);
+    }
+  };
+
+  // ✅ Handle select conversation with auto refresh
+  const handleSelectConversation = (conv: Conversation) => {
+    setSelectedConversation(conv);
+    // Auto refresh ทุกครั้งที่เลือก conversation (background)
+    autoRefreshProfile(conv);
+  };
+
   // Refresh LINE user profile
   const refreshUserProfile = async () => {
     if (!selectedConversation?.line_user?.id) return;
@@ -1353,7 +1484,9 @@ export default function InboxPage() {
           ...selectedConversation.line_user,
           display_name: data.data.display_name,
           picture_url: data.data.picture_url,
-          follow_status: 'following' as const
+          follow_status: 'following' as const,
+          // ✅ อัพเดท member_count ถ้ามี (สำหรับ group)
+          ...(data.data.member_count !== undefined && { member_count: data.data.member_count })
         };
         
         setSelectedConversation(prev => prev ? { 
@@ -1367,10 +1500,14 @@ export default function InboxPage() {
             : c
         ));
         
+        // ✅ แสดงข้อความต่างกันสำหรับ group
+        const isGroup = selectedConversation.line_user?.source_type === 'group';
         Swal.fire({
           icon: 'success',
           title: 'อัพเดทสำเร็จ',
-          text: `โปรไฟล์: ${data.data.display_name}`,
+          text: isGroup 
+            ? `กลุ่ม: ${data.data.display_name} (${data.data.member_count} สมาชิก)`
+            : `โปรไฟล์: ${data.data.display_name}`,
           timer: 2000,
           showConfirmButton: false
         });
@@ -1425,7 +1562,7 @@ export default function InboxPage() {
     inputRef.current?.focus();
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value;
     setNewMessage(value);
 
@@ -1442,25 +1579,39 @@ export default function InboxPage() {
     }
   };
 
-  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (!showShortcutDropdown || filteredShortcuts.length === 0) return;
-
-    if (e.key === 'ArrowDown') {
+  const handleInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // ถ้ามี shortcut dropdown
+    if (showShortcutDropdown && filteredShortcuts.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setSelectedShortcutIndex(prev => 
+          prev < filteredShortcuts.length - 1 ? prev + 1 : prev
+        );
+        return;
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setSelectedShortcutIndex(prev => prev > 0 ? prev - 1 : 0);
+        return;
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleQuickReplySelect(filteredShortcuts[selectedShortcutIndex]);
+        return;
+      } else if (e.key === 'Escape') {
+        setShowShortcutDropdown(false);
+        return;
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        handleQuickReplySelect(filteredShortcuts[selectedShortcutIndex]);
+        return;
+      }
+    }
+    
+    // Enter = ส่งข้อความ, Shift+Enter = ขึ้นบรรทัดใหม่
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      setSelectedShortcutIndex(prev => 
-        prev < filteredShortcuts.length - 1 ? prev + 1 : prev
-      );
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setSelectedShortcutIndex(prev => prev > 0 ? prev - 1 : 0);
-    } else if (e.key === 'Enter' && showShortcutDropdown) {
-      e.preventDefault();
-      handleQuickReplySelect(filteredShortcuts[selectedShortcutIndex]);
-    } else if (e.key === 'Escape') {
-      setShowShortcutDropdown(false);
-    } else if (e.key === 'Tab' && showShortcutDropdown) {
-      e.preventDefault();
-      handleQuickReplySelect(filteredShortcuts[selectedShortcutIndex]);
+      if (newMessage.trim()) {
+        handleSendMessage(e as any);
+      }
     }
   };
 
@@ -1505,7 +1656,148 @@ export default function InboxPage() {
           </div>
         </div>
       )}
-      
+
+      {/* Notes Modal */}
+      {showNotesModal && selectedConversation && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-lg mx-4">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <FiFileText className="w-5 h-5 text-amber-500" />
+                <h3 className="font-semibold text-lg">โน้ตภายใน</h3>
+              </div>
+              <button 
+                onClick={() => setShowNotesModal(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg"
+              >
+                <FiX className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-6">
+              <textarea
+                value={editingNotes}
+                onChange={(e) => setEditingNotes(e.target.value)}
+                placeholder="เพิ่มโน้ตสำหรับทีมงาน... (ลูกค้า LINE จะไม่เห็น)"
+                className="w-full h-40 border border-gray-200 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-green-500 resize-none"
+              />
+              <p className="text-xs text-gray-500 mt-2">
+                💡 โน้ตนี้เป็นข้อมูลภายในสำหรับทีมงาน ลูกค้าจะไม่เห็น
+              </p>
+            </div>
+            <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100 bg-gray-50 rounded-b-xl">
+              <button
+                onClick={() => setShowNotesModal(false)}
+                className="px-4 py-2 text-gray-600 hover:bg-gray-200 rounded-lg"
+              >
+                ยกเลิก
+              </button>
+              <button
+                onClick={saveNotes}
+                disabled={savingNotes}
+                className="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 disabled:opacity-50 flex items-center gap-2"
+              >
+                {savingNotes ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    กำลังบันทึก...
+                  </>
+                ) : (
+                  <>
+                    <FiCheck className="w-4 h-4" />
+                    บันทึก
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assign Modal */}
+      {showAssignModal && selectedConversation && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md mx-4">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <FiUserCheck className="w-5 h-5 text-purple-500" />
+                <h3 className="font-semibold text-lg">มอบหมายงาน</h3>
+              </div>
+              <button 
+                onClick={() => setShowAssignModal(false)}
+                className="p-2 hover:bg-gray-100 rounded-lg"
+              >
+                <FiX className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 max-h-80 overflow-y-auto">
+              {/* Unassign option */}
+              <button
+                onClick={() => saveAssignedTo(null)}
+                disabled={savingAssign}
+                className={`w-full flex items-center gap-3 p-3 rounded-lg transition-all ${
+                  !selectedConversation.assigned_to 
+                    ? 'bg-purple-50 border-2 border-purple-500' 
+                    : 'hover:bg-gray-50 border border-gray-200'
+                }`}
+              >
+                <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
+                  <FiX className="w-5 h-5 text-gray-500" />
+                </div>
+                <div className="text-left">
+                  <div className="font-medium">ไม่มอบหมาย</div>
+                  <div className="text-xs text-gray-500">ยกเลิกการมอบหมาย</div>
+                </div>
+              </button>
+              
+              {/* Admins list */}
+              {channelAdmins.map(admin => (
+                <button
+                  key={admin.id}
+                  onClick={() => saveAssignedTo(admin.id)}
+                  disabled={savingAssign}
+                  className={`w-full flex items-center gap-3 p-3 rounded-lg mt-2 transition-all ${
+                    selectedConversation.assigned_to?.id === admin.id 
+                      ? 'bg-purple-50 border-2 border-purple-500' 
+                      : 'hover:bg-gray-50 border border-gray-200'
+                  }`}
+                >
+                  {admin.avatar ? (
+                    <img src={admin.avatar} alt="" className="w-10 h-10 rounded-full object-cover" />
+                  ) : (
+                    <div className="w-10 h-10 bg-purple-100 rounded-full flex items-center justify-center">
+                      <span className="text-purple-600 font-medium">
+                        {admin.name?.charAt(0).toUpperCase()}
+                      </span>
+                    </div>
+                  )}
+                  <div className="text-left flex-1">
+                    <div className="font-medium flex items-center gap-2">
+                      {admin.name}
+                      {admin.role === 'owner' && (
+                        <span className="px-1.5 py-0.5 bg-yellow-100 text-yellow-700 text-xs rounded">Owner</span>
+                      )}
+                      {admin.role === 'admin' && (
+                        <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-xs rounded">Admin</span>
+                      )}
+                    </div>
+                  </div>
+                  {selectedConversation.assigned_to?.id === admin.id && (
+                    <FiCheck className="w-5 h-5 text-purple-500" />
+                  )}
+                </button>
+              ))}
+              
+              {channelAdmins.length === 0 && (
+                <div className="text-center text-gray-500 py-8">
+                  <FiUsers className="w-12 h-12 mx-auto text-gray-300 mb-2" />
+                  <p>ไม่พบแอดมินที่มีสิทธิ์เข้าถึง Channel นี้</p>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Sidebar - Conversation List */}
       <div className="w-80 bg-white border-r border-gray-200 flex flex-col">
         {/* Header */}
@@ -1578,7 +1870,7 @@ export default function InboxPage() {
             filteredConversations.map(conv => (
               <div
                 key={conv.id}
-                onClick={() => setSelectedConversation(conv)}
+                onClick={() => handleSelectConversation(conv)}
                 className={`conversation-item ${selectedConversation?.id === conv.id ? 'active' : ''} ${conv.status === 'unread' ? 'unread' : ''}`}
               >
                 <div className="relative flex-shrink-0">
@@ -1709,15 +2001,42 @@ export default function InboxPage() {
                     <span key="header-channel" className="tag bg-green-100 text-green-700 text-xs">
                       {selectedConversation.channel?.channel_name}
                     </span>
+                    {/* ✅ แสดงจำนวนสมาชิกในกลุ่ม (clickable) */}
                     {/* ✅ แสดงจำนวนสมาชิกในกลุ่ม */}
                     {(selectedConversation.line_user?.source_type === 'group' || selectedConversation.line_user?.source_type === 'room') && 
                      selectedConversation.line_user?.member_count && selectedConversation.line_user.member_count > 0 && (
-                      <span className="text-xs text-gray-500 flex items-center gap-1">
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
-                        </svg>
+                      <span className="text-xs text-gray-500 flex items-center gap-1 px-1.5 py-0.5">
+                        <FiUsers className="w-3 h-3" />
                         {selectedConversation.line_user.member_count} สมาชิก
                       </span>
+                    )}
+                    {/* ✅ Assigned indicator */}
+                    {selectedConversation.assigned_to && (
+                      <button
+                        onClick={() => {
+                          fetchChannelAdmins(selectedConversation.channel_id);
+                          setShowAssignModal(true);
+                        }}
+                        className="text-xs bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded flex items-center gap-1 hover:bg-purple-200"
+                        title={`มอบหมายให้: ${selectedConversation.assigned_to.name}`}
+                      >
+                        <FiUserCheck className="w-3 h-3" />
+                        {selectedConversation.assigned_to.name}
+                      </button>
+                    )}
+                    {/* ✅ Notes indicator */}
+                    {selectedConversation.notes && (
+                      <button
+                        onClick={() => {
+                          setEditingNotes(selectedConversation.notes || '');
+                          setShowNotesModal(true);
+                        }}
+                        className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded flex items-center gap-1 hover:bg-amber-200"
+                        title="มีโน้ต"
+                      >
+                        <FiFileText className="w-3 h-3" />
+                        โน้ต
+                      </button>
                     )}
                     {selectedConversation.tags?.map(tag => (
                       <span 
@@ -1741,11 +2060,38 @@ export default function InboxPage() {
                 >
                   <FiRefreshCw className="w-5 h-5 text-gray-500" />
                 </button>
+
+                {/* Notes Button */}
+                <button 
+                  onClick={() => {
+                    setEditingNotes(selectedConversation.notes || '');
+                    setShowNotesModal(true);
+                  }}
+                  className={`p-2 hover:bg-gray-100 rounded-lg ${selectedConversation.notes ? 'text-amber-500' : ''}`}
+                  title="โน้ตภายใน"
+                >
+                  <FiFileText className={`w-5 h-5 ${selectedConversation.notes ? 'text-amber-500' : 'text-gray-500'}`} />
+                </button>
+
+                {/* Assign Button */}
+                <button 
+                  onClick={() => {
+                    fetchChannelAdmins(selectedConversation.channel_id);
+                    setShowAssignModal(true);
+                  }}
+                  className={`p-2 hover:bg-gray-100 rounded-lg ${selectedConversation.assigned_to ? 'text-purple-500' : ''}`}
+                  title="มอบหมายงาน"
+                >
+                  <FiUserCheck className={`w-5 h-5 ${selectedConversation.assigned_to ? 'text-purple-500' : 'text-gray-500'}`} />
+                </button>
                 
                 {/* Tag Button */}
                 <div className="relative">
                   <button 
-                    onClick={() => setShowTagModal(!showTagModal)}
+                    onClick={() => {
+                      fetchTags(selectedConversation.channel_id);
+                      setShowTagModal(!showTagModal);
+                    }}
                     className="p-2 hover:bg-gray-100 rounded-lg"
                     title="จัดการ Tags"
                   >
@@ -1755,30 +2101,42 @@ export default function InboxPage() {
                   {showTagModal && (
                     <>
                       <div className="fixed inset-0 z-10" onClick={() => setShowTagModal(false)} />
-                      <div className="absolute right-0 mt-2 w-56 bg-white rounded-lg shadow-lg border border-gray-200 p-2 z-20">
-                        <div className="font-medium text-gray-700 px-2 py-1 mb-2">เลือก Tags</div>
-                        {allTags.length === 0 ? (
-                          <div className="text-sm text-gray-500 px-2 py-1">ยังไม่มี Tags</div>
-                        ) : (
-                          allTags.map(tag => (
-                            <label
-                              key={tag.id}
-                              className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-50 rounded cursor-pointer"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={conversationTags.includes(tag.id)}
-                                onChange={() => handleTagToggle(tag.id)}
-                                className="rounded"
-                              />
-                              <span 
-                                className="w-3 h-3 rounded-full"
-                                style={{ backgroundColor: tag.color }}
-                              />
-                              <span className="text-sm">{tag.name}</span>
-                            </label>
-                          ))
-                        )}
+                      <div className="absolute right-0 mt-2 w-72 bg-white rounded-lg shadow-lg border border-gray-200 z-20 max-h-96 overflow-y-auto">
+                        {/* เลือก Tags สำหรับ Conversation */}
+                        <div className="p-3 border-b border-gray-100">
+                          <div className="font-medium text-gray-700 text-sm mb-2">เลือก Tags</div>
+                          {allTags.length === 0 ? (
+                            <div className="text-sm text-gray-500 py-2">ยังไม่มี Tags ใน Channel นี้</div>
+                          ) : (
+                            <div className="space-y-1 max-h-40 overflow-y-auto">
+                              {allTags.map(tag => (
+                                <label
+                                  key={tag.id}
+                                  className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-50 rounded cursor-pointer"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={conversationTags.includes(tag.id)}
+                                    onChange={() => handleTagToggle(tag.id)}
+                                    className="rounded"
+                                  />
+                                  <span 
+                                    className="w-3 h-3 rounded-full"
+                                    style={{ backgroundColor: tag.color }}
+                                  />
+                                  <span className="text-sm">{tag.name}</span>
+                                </label>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {/* จัดการ Tags ของ Channel */}
+                        <div className="p-3">
+                          <TagsManager 
+                            channelId={selectedConversation.channel_id} 
+                            onTagsChange={() => fetchTags(selectedConversation.channel_id)}
+                          />
+                        </div>
                       </div>
                     </>
                   )}
@@ -2061,129 +2419,134 @@ export default function InboxPage() {
              selectedConversation.line_user?.display_name !== 'Unknown' &&
              selectedConversation.line_user?.follow_status !== 'unfollowed' &&
              selectedConversation.line_user?.follow_status !== 'blocked' ? (
-            <form onSubmit={handleSendMessage} className={`bg-white ${!showQuickReplies ? 'border-t border-gray-200' : ''} p-4 pt-3`}>
-              <div className="flex items-center gap-2">
-                {/* Image Upload */}
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageUpload}
-                  className="hidden"
-                  id="image-upload"
+            <form onSubmit={handleSendMessage} className={`bg-white ${!showQuickReplies ? 'border-t border-gray-200' : ''} p-4`}>
+              {/* Textarea on top */}
+              <div className="relative mb-3">
+                <textarea
+                  ref={inputRef}
+                  value={newMessage}
+                  onChange={handleInputChange}
+                  onKeyDown={handleInputKeyDown}
+                  placeholder={`พิมพ์ข้อความ... (พิมพ์ / เพื่อใช้ทางลัด)\nEnter: ส่ง, Shift + Enter: ขึ้นบรรทัดใหม่`}
+                  rows={3}
+                  className="input w-full py-3 px-4 resize-none min-h-[80px]"
+                  style={{ lineHeight: '1.5' }}
                 />
-                <label
-                  htmlFor="image-upload"
-                  className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
-                  title="ส่งรูปภาพ"
-                >
-                  <FiImage className="w-5 h-5 text-gray-500" />
-                </label>
-
-                {/* Emoji Picker */}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowEmojiPicker(!showEmojiPicker);
-                      setShowStickerPicker(false);
-                    }}
-                    className={`p-2 hover:bg-gray-100 rounded-lg ${showEmojiPicker ? 'bg-gray-100' : ''}`}
-                    title="Emoji"
-                  >
-                    <FiSmile className="w-5 h-5 text-gray-500" />
-                  </button>
-                  {showEmojiPicker && (
-                    <>
-                      <div className="fixed inset-0 z-40" onClick={() => setShowEmojiPicker(false)} />
-                      <EmojiPicker 
-                        onSelect={handleEmojiSelect} 
-                        onClose={() => setShowEmojiPicker(false)} 
-                      />
-                    </>
-                  )}
-                </div>
-
-                {/* Sticker Picker */}
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowStickerPicker(!showStickerPicker);
-                      setShowEmojiPicker(false);
-                    }}
-                    className={`p-2 hover:bg-gray-100 rounded-lg ${showStickerPicker ? 'bg-gray-100' : ''}`}
-                    title="LINE Sticker"
-                  >
-                    <span className="text-lg">🐻</span>
-                  </button>
-                  {showStickerPicker && (
-                    <>
-                      <div className="fixed inset-0 z-40" onClick={() => setShowStickerPicker(false)} />
-                      <StickerPicker 
-                        onSelect={handleSendSticker} 
-                        onClose={() => setShowStickerPicker(false)} 
-                      />
-                    </>
-                  )}
-                </div>
                 
-                {/* Quick Reply Button */}
-                <button
-                  type="button"
-                  onClick={() => setShowQuickReplies(!showQuickReplies)}
-                  className={`p-2 hover:bg-gray-100 rounded-lg ${showQuickReplies ? 'bg-gray-100' : ''}`}
-                  title="ข้อความตอบกลับ (พิมพ์ / เพื่อค้นหา)"
-                >
-                  <FiZap className="w-5 h-5 text-gray-500" />
-                </button>
-                
-                {/* Input with Shortcut Dropdown */}
-                <div className="flex-1 relative">
-                  <input
-                    ref={inputRef}
-                    type="text"
-                    value={newMessage}
-                    onChange={handleInputChange}
-                    onKeyDown={handleInputKeyDown}
-                    placeholder="พิมพ์ข้อความ... (พิมพ์ / เพื่อใช้ทางลัด)"
-                    className="input w-full py-3"
-                  />
-                  
-                  {/* Shortcut Autocomplete Dropdown */}
-                  {showShortcutDropdown && filteredShortcuts.length > 0 && (
-                    <div className="absolute bottom-full left-0 right-0 mb-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto z-50">
-                      {filteredShortcuts.map((reply, index) => (
-                        <button
-                          key={reply.id}
-                          type="button"
-                          onClick={() => handleQuickReplySelect(reply)}
-                          className={`w-full px-3 py-2 text-left hover:bg-gray-50 flex items-center gap-2 ${
-                            index === selectedShortcutIndex ? 'bg-green-50 border-l-2 border-green-500' : ''
-                          }`}
-                        >
-                          <span className="text-green-600 font-mono text-sm">/{reply.shortcut}</span>
-                          <span className="text-gray-700">{reply.title}</span>
-                          <span className="text-gray-400 text-xs truncate flex-1 text-right">
-                            {reply.content.length > 30 ? reply.content.substring(0, 30) + '...' : reply.content}
-                          </span>
-                        </button>
-                      ))}
-                      <div className="px-3 py-1 text-xs text-gray-400 border-t bg-gray-50">
-                        ↑↓ เลือก • Enter/Tab ใช้งาน • Esc ปิด
-                      </div>
+                {/* Shortcut Autocomplete Dropdown */}
+                {showShortcutDropdown && filteredShortcuts.length > 0 && (
+                  <div className="absolute bottom-full left-0 right-0 mb-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto z-50">
+                    {filteredShortcuts.map((reply, index) => (
+                      <button
+                        key={reply.id}
+                        type="button"
+                        onClick={() => handleQuickReplySelect(reply)}
+                        className={`w-full px-3 py-2 text-left hover:bg-gray-50 flex items-center gap-2 ${
+                          index === selectedShortcutIndex ? 'bg-green-50 border-l-2 border-green-500' : ''
+                        }`}
+                      >
+                        <span className="text-green-600 font-mono text-sm">/{reply.shortcut}</span>
+                        <span className="text-gray-700">{reply.title}</span>
+                        <span className="text-gray-400 text-xs truncate flex-1 text-right">
+                          {reply.content.length > 30 ? reply.content.substring(0, 30) + '...' : reply.content}
+                        </span>
+                      </button>
+                    ))}
+                    <div className="px-3 py-1 text-xs text-gray-400 border-t bg-gray-50">
+                      ↑↓ เลือก • Enter/Tab ใช้งาน • Esc ปิด
                     </div>
-                  )}
+                  </div>
+                )}
+              </div>
+              
+              {/* Buttons on bottom */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1">
+                  {/* Emoji Picker */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowEmojiPicker(!showEmojiPicker);
+                        setShowStickerPicker(false);
+                      }}
+                      className={`p-2 hover:bg-gray-100 rounded-lg ${showEmojiPicker ? 'bg-gray-100' : ''}`}
+                      title="Emoji"
+                    >
+                      <FiSmile className="w-5 h-5 text-gray-500" />
+                    </button>
+                    {showEmojiPicker && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setShowEmojiPicker(false)} />
+                        <EmojiPicker 
+                          onSelect={handleEmojiSelect} 
+                          onClose={() => setShowEmojiPicker(false)} 
+                        />
+                      </>
+                    )}
+                  </div>
+
+                  {/* Image Upload */}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={handleImageUpload}
+                    className="hidden"
+                    id="image-upload"
+                  />
+                  <label
+                    htmlFor="image-upload"
+                    className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
+                    title="ส่งรูปภาพ"
+                  >
+                    <FiPaperclip className="w-5 h-5 text-gray-500" />
+                  </label>
+
+                  {/* Quick Reply Button */}
+                  <button
+                    type="button"
+                    onClick={() => setShowQuickReplies(!showQuickReplies)}
+                    className={`p-2 hover:bg-gray-100 rounded-lg ${showQuickReplies ? 'bg-gray-100' : ''}`}
+                    title="ข้อความตอบกลับ (พิมพ์ / เพื่อค้นหา)"
+                  >
+                    <FiMessageCircle className="w-5 h-5 text-gray-500" />
+                  </button>
+
+                  {/* Sticker Picker */}
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowStickerPicker(!showStickerPicker);
+                        setShowEmojiPicker(false);
+                      }}
+                      className={`p-2 hover:bg-gray-100 rounded-lg ${showStickerPicker ? 'bg-gray-100' : ''}`}
+                      title="LINE Sticker"
+                    >
+                      <span className="text-lg">🐻</span>
+                    </button>
+                    {showStickerPicker && (
+                      <>
+                        <div className="fixed inset-0 z-40" onClick={() => setShowStickerPicker(false)} />
+                        <StickerPicker 
+                          onSelect={handleSendSticker} 
+                          onClose={() => setShowStickerPicker(false)} 
+                        />
+                      </>
+                    )}
+                  </div>
                 </div>
                 
+                {/* Send Button */}
                 <button
                   type="submit"
                   disabled={!newMessage.trim() || sendingMessage}
-                  className="btn btn-primary p-3"
+                  className="btn btn-primary px-6 py-2"
                 >
                   {sendingMessage ? (
                     <div className="spinner w-5 h-5 border-white border-t-transparent" />
                   ) : (
-                    <FiSend className="w-5 h-5" />
+                    <span className="font-medium">ส่ง</span>
                   )}
                 </button>
               </div>

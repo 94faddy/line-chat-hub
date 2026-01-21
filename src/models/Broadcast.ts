@@ -3,6 +3,7 @@ import mongoose, { Schema, Document, Model, Types } from 'mongoose';
 export interface IBroadcast extends Document {
   _id: Types.ObjectId;
   channel_id: Types.ObjectId;
+  broadcast_type: 'official' | 'push'; // official = LINE OA broadcast, push = multicast
   message_type: 'text' | 'image' | 'template' | 'flex';
   content: string;
   target_type: 'all' | 'segment';
@@ -24,6 +25,11 @@ const BroadcastSchema = new Schema<IBroadcast>(
       ref: 'LineChannel',
       required: true,
       index: true,
+    },
+    broadcast_type: {
+      type: String,
+      enum: ['official', 'push'],
+      default: 'push',
     },
     message_type: {
       type: String,
