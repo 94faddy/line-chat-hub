@@ -232,7 +232,7 @@ export async function POST(request: NextRequest) {
 
     // ✅ ดึงข้อมูล user ที่ส่งข้อความ
     const User = mongoose.models.User;
-    const senderUser = await User.findById(userId).select('name avatar').lean();
+    const senderUser = await User.findById(userId).select('name avatar').lean() as { name?: string; avatar?: string } | null;
 
     // ส่ง realtime notification
     const messageData = {

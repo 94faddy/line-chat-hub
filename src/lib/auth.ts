@@ -80,3 +80,23 @@ export const verifyPassword = comparePassword;
 
 // Alias for generateToken (ใช้ใน API routes)
 export const createToken = generateToken;
+
+// Extended payload with id for API routes
+export interface AuthUserPayload extends JWTPayload {
+  id: string;
+}
+
+// Verify token from request (ใช้ใน API routes)
+export function verifyTokenFromRequest(request: Request): AuthUserPayload | null {
+  const token = getTokenFromCookies(request);
+  if (!token) return null;
+  
+  const payload = verifyToken(token);
+  if (!payload) return null;
+  
+  // Return payload with id alias for userId
+  return {
+    ...payload,
+    id: payload.userId
+  };
+}

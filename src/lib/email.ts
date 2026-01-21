@@ -172,3 +172,22 @@ export async function sendAdminInviteEmail(email: string, ownerName: string, tok
     html,
   });
 }
+
+// Generic sendEmail function (ใช้ใน API routes)
+interface EmailOptions {
+  to: string;
+  subject: string;
+  html: string;
+  from?: string;
+}
+
+export async function sendEmail(options: EmailOptions) {
+  const { to, subject, html, from } = options;
+  
+  await transporter.sendMail({
+    from: from || `"${APP_NAME}" <${process.env.SMTP_USER}>`,
+    to,
+    subject,
+    html,
+  });
+}

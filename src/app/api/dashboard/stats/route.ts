@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Remove duplicates
-    const uniqueChannelIds = [...new Set(channelIds.map(id => id.toString()))];
+    const uniqueChannelIds = Array.from(new Set(channelIds.map(id => id.toString())));
 
     // Build date filter
     const dateFilter: any = {};

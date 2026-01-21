@@ -42,7 +42,7 @@ export async function POST(request: NextRequest) {
 
     // ส่ง verification email
     try {
-      await sendVerificationEmail(email, verificationToken);
+      await sendVerificationEmail(email, name, verificationToken);
     } catch (e) {
       console.error('Send verification email error:', e);
     }

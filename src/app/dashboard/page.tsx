@@ -1111,7 +1111,7 @@ export default function InboxPage() {
     }
   };
 
-  const fetchMessages = async (conversationId: number) => {
+  const fetchMessages = async (conversationId: string) => {
     try {
       const res = await fetch(`/api/messages?conversation_id=${conversationId}`);
       const data = await res.json();
@@ -1203,7 +1203,7 @@ export default function InboxPage() {
     }
   };
 
-  const fetchQuickReplies = async (channelId: number) => {
+  const fetchQuickReplies = async (channelId: string) => {
     try {
       const res = await fetch(`/api/quick-replies?channel_id=${channelId}`);
       const data = await res.json();
@@ -1215,7 +1215,7 @@ export default function InboxPage() {
     }
   };
 
-  const markAsRead = async (conversationId: number) => {
+  const markAsRead = async (conversationId: string) => {
     try {
       await fetch(`/api/messages/conversations/${conversationId}/read`, {
         method: 'POST',

@@ -34,7 +34,7 @@ async function getAccessibleChannelIds(userId: mongoose.Types.ObjectId): Promise
   const allChannelIds = [...ownedChannelIds, ...permittedChannelIds, ...ownerChannelIds];
   
   // ลบ duplicates
-  const uniqueIds = [...new Map(allChannelIds.map(id => [id.toString(), id])).values()];
+  const uniqueIds = Array.from(new Map(allChannelIds.map(id => [id.toString(), id])).values());
   
   return uniqueIds;
 }

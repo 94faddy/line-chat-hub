@@ -437,3 +437,8 @@ export async function getGroupMemberCount(
   const data = await response.json();
   return data.count;
 }
+
+/**
+ * Alias for pushMessage - ส่งข้อความไปยัง LINE user (ใช้ใน API routes)
+ */
+export const sendLinePush = pushMessage;

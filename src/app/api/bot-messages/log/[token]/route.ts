@@ -111,7 +111,7 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
         .populate('channel_id');
       
       if (existingLineUser && existingLineUser.channel_id) {
-        channel = existingLineUser.channel_id;
+        channel = existingLineUser.channel_id as any;
         channel_id = channel._id.toString();
         console.log('📍 [Bot Log] Found channel from existing line user:', channel_id, '- Channel:', channel.channel_name);
       }

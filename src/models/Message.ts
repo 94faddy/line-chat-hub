@@ -113,7 +113,7 @@ const MessageSchema = new Schema<IMessage>(
     timestamps: false, // ใช้ created_at แบบ manual
     toJSON: {
       virtuals: true,
-      transform: (_, ret) => {
+      transform: (_, ret: any) => {
         ret.id = ret._id;
         delete ret.__v;
         return ret;

@@ -18,30 +18,19 @@ export async function GET(request: NextRequest) {
 
     // Create readable stream for SSE
     const encoder = new TextEncoder();
-    let controller: ReadableStreamDefaultController<Uint8Array>;
+    let streamController: ReadableStreamDefaultController<Uint8Array>;
     let intervalId: NodeJS.Timeout;
-    let clientId: string;
 
     const stream = new ReadableStream({
-      start(c) {
-        controller = c;
-        clientId = `${user.id}_${Date.now()}`;
+      start(controller) {
+        streamController = controller;
 
         // Send initial connection message
-        const connectMessage = `data: ${JSON.stringify({ type: 'connected', clientId })}\n\n`;
+        const connectMessage = `data: ${JSON.stringify({ type: 'connected', userId: user.id })}\n\n`;
         controller.enqueue(encoder.encode(connectMessage));
 
         // Register client for notifications
-        const sendEvent = (event: any) => {
-          try {
-            const message = `data: ${JSON.stringify(event)}\n\n`;
-            controller.enqueue(encoder.encode(message));
-          } catch (e) {
-            console.error('Error sending SSE event:', e);
-          }
-        };
-
-        addClient(user.id, clientId, sendEvent);
+        addClient(user.id, controller);
 
         // Keep connection alive with heartbeat
         intervalId = setInterval(() => {
@@ -58,8 +47,8 @@ export async function GET(request: NextRequest) {
         if (intervalId) {
           clearInterval(intervalId);
         }
-        if (clientId) {
-          removeClient(user.id, clientId);
+        if (streamController) {
+          removeClient(user.id, streamController);
         }
       }
     });

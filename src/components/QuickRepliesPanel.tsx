@@ -8,19 +8,19 @@ import {
 import Swal from 'sweetalert2';
 
 interface Channel {
-  id: number;
+  id: string;
   channel_name: string;
   picture_url?: string;
 }
 
 interface QuickReply {
-  id: number;
+  id: string;
   title: string;
   shortcut?: string;
   message_type: string;
   content: string;
   media_url?: string;
-  channel_id?: number;
+  channel_id?: string;
   channel_name?: string;
   use_count: number;
   is_active: boolean;
@@ -31,7 +31,7 @@ interface QuickRepliesPanelProps {
   // เมื่อเลือกข้อความตอบกลับ
   onSelect?: (reply: QuickReply) => void;
   // Channel ปัจจุบัน (สำหรับ filter)
-  currentChannelId?: number;
+  currentChannelId?: string;
   // ปิด panel
   onClose?: () => void;
   // แสดงแบบ compact (สำหรับ inbox)

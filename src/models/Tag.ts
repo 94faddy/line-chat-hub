@@ -34,7 +34,7 @@ const TagSchema = new Schema<ITag>(
     timestamps: { createdAt: 'created_at', updatedAt: 'updated_at' },
     toJSON: {
       virtuals: true,
-      transform: (_, ret) => {
+      transform: (_, ret: any) => {
         ret.id = ret._id;
         delete ret.__v;
         return ret;
