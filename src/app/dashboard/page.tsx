@@ -26,6 +26,11 @@ interface LineUser {
   picture_url?: string;
   line_user_id: string;
   follow_status?: 'following' | 'unfollowed' | 'blocked' | 'unknown';
+  // ✅ เพิ่มรองรับ Group/Room
+  source_type?: 'user' | 'group' | 'room';
+  group_id?: string;
+  room_id?: string;
+  member_count?: number;
 }
 
 interface Tag {
@@ -67,6 +72,18 @@ interface Message {
   package_id?: string;
   flex_content?: string;
   source_type?: string;
+  // ✅ ข้อมูลคนส่งในกลุ่ม LINE
+  sender_info?: {
+    user_id: string;
+    display_name?: string;
+    picture_url?: string;
+  };
+  // ✅ ข้อมูล admin ที่ตอบข้อความ
+  sent_by?: {
+    id: string;
+    name: string;
+    avatar?: string;
+  };
   created_at: string;
 }
 
@@ -508,6 +525,9 @@ export default function InboxPage() {
   const [filterChannel, setFilterChannel] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
+  
+  // ✅ Current User state
+  const [currentUser, setCurrentUser] = useState<{ id: string; name: string; avatar?: string } | null>(null);
   
   // Tags state
   const [allTags, setAllTags] = useState<Tag[]>([]);
@@ -1000,6 +1020,7 @@ export default function InboxPage() {
     fetchChannels();
     fetchConversations();
     fetchTags();
+    fetchCurrentUser(); // ✅ ดึงข้อมูล user ปัจจุบัน
     
     // ✅ ขอ permission สำหรับ Browser Notification
     requestNotificationPermission();
@@ -1037,6 +1058,23 @@ export default function InboxPage() {
       }
     } catch (error) {
       console.error('Error fetching channels:', error);
+    }
+  };
+
+  // ✅ ดึงข้อมูล Current User
+  const fetchCurrentUser = async () => {
+    try {
+      const res = await fetch('/api/auth/me');
+      const data = await res.json();
+      if (data.success && data.data) {
+        setCurrentUser({
+          id: data.data.id,
+          name: data.data.name,
+          avatar: data.data.avatar
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching current user:', error);
     }
   };
 
@@ -1552,7 +1590,18 @@ export default function InboxPage() {
                     />
                   ) : (
                     <div className="w-12 h-12 bg-gray-200 rounded-full flex items-center justify-center">
-                      <FiUser className="w-6 h-6 text-gray-400" />
+                      {/* ✅ แสดง icon ต่างกันสำหรับ group/room/user */}
+                      {conv.line_user?.source_type === 'group' ? (
+                        <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                      ) : conv.line_user?.source_type === 'room' ? (
+                        <svg className="w-6 h-6 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                        </svg>
+                      ) : (
+                        <FiUser className="w-6 h-6 text-gray-400" />
+                      )}
                     </div>
                   )}
                   {conv.unread_count > 0 && (
@@ -1560,13 +1609,29 @@ export default function InboxPage() {
                       {conv.unread_count > 9 ? '9+' : conv.unread_count}
                     </span>
                   )}
+                  {/* ✅ แสดง badge กลุ่มที่มุมขวาล่าง */}
+                  {(conv.line_user?.source_type === 'group' || conv.line_user?.source_type === 'room') && (
+                    <span className="absolute -bottom-0.5 -right-0.5 bg-blue-500 text-white text-[8px] w-4 h-4 rounded-full flex items-center justify-center font-bold">
+                      {conv.line_user?.member_count && conv.line_user.member_count > 0 
+                        ? (conv.line_user.member_count > 99 ? '99+' : conv.line_user.member_count)
+                        : 'G'}
+                    </span>
+                  )}
                 </div>
                 
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center justify-between mb-1">
-                    <span className={`font-medium truncate ${conv.status === 'unread' ? 'text-gray-900' : 'text-gray-700'}`}>
-                      {conv.line_user?.display_name || 'Unknown'}
-                    </span>
+                    <div className="flex items-center gap-1.5 truncate">
+                      <span className={`font-medium truncate ${conv.status === 'unread' ? 'text-gray-900' : 'text-gray-700'}`}>
+                        {conv.line_user?.display_name || 'Unknown'}
+                      </span>
+                      {/* ✅ แสดง icon กลุ่มข้างชื่อ */}
+                      {conv.line_user?.source_type === 'group' && (
+                        <svg className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                          <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a4 4 0 00-8 0v3h8v-3zM6 8a2 2 0 11-4 0 2 2 0 014 0zM16 18v-3a5.972 5.972 0 00-.75-2.906A3.005 3.005 0 0119 15v3h-3zM4.75 12.094A5.973 5.973 0 004 15v3H1v-3a3 3 0 013.75-2.906z" />
+                        </svg>
+                      )}
+                    </div>
                     <span className="text-xs text-gray-400 flex-shrink-0">
                       {conv.last_message_at && formatThaiTime(conv.last_message_at)}
                     </span>
@@ -1613,17 +1678,47 @@ export default function InboxPage() {
                   />
                 ) : (
                   <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
-                    <FiUser className="w-5 h-5 text-gray-400" />
+                    {/* ✅ แสดง icon ต่างกันสำหรับ group/user */}
+                    {selectedConversation.line_user?.source_type === 'group' ? (
+                      <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                      </svg>
+                    ) : (
+                      <FiUser className="w-5 h-5 text-gray-400" />
+                    )}
                   </div>
                 )}
                 <div>
-                  <h2 className="font-semibold text-gray-900">
-                    {selectedConversation.line_user?.display_name || 'Unknown'}
-                  </h2>
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-semibold text-gray-900">
+                      {selectedConversation.line_user?.display_name || 'Unknown'}
+                    </h2>
+                    {/* ✅ แสดง badge กลุ่ม */}
+                    {selectedConversation.line_user?.source_type === 'group' && (
+                      <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 text-xs rounded font-medium">
+                        กลุ่ม
+                      </span>
+                    )}
+                    {selectedConversation.line_user?.source_type === 'room' && (
+                      <span className="px-1.5 py-0.5 bg-purple-100 text-purple-700 text-xs rounded font-medium">
+                        ห้อง
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-2">
                     <span key="header-channel" className="tag bg-green-100 text-green-700 text-xs">
                       {selectedConversation.channel?.channel_name}
                     </span>
+                    {/* ✅ แสดงจำนวนสมาชิกในกลุ่ม */}
+                    {(selectedConversation.line_user?.source_type === 'group' || selectedConversation.line_user?.source_type === 'room') && 
+                     selectedConversation.line_user?.member_count && selectedConversation.line_user.member_count > 0 && (
+                      <span className="text-xs text-gray-500 flex items-center gap-1">
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197m13.5-9a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0z" />
+                        </svg>
+                        {selectedConversation.line_user.member_count} สมาชิก
+                      </span>
+                    )}
                     {selectedConversation.tags?.map(tag => (
                       <span 
                         key={`header-tag-${tag.id}`} 
@@ -1777,7 +1872,36 @@ export default function InboxPage() {
                   key={msg.id}
                   className={`flex ${msg.direction === 'outgoing' ? 'justify-end' : 'justify-start'}`}
                 >
+                  {/* ✅ แสดงรูปคนส่งในกลุ่ม (ไม่แสดงสำหรับ bot_reply) */}
+                  {msg.direction === 'incoming' && msg.sender_info && msg.source_type !== 'bot_reply' && (
+                    <div className="flex-shrink-0 mr-2">
+                      {msg.sender_info.picture_url ? (
+                        <img 
+                          src={msg.sender_info.picture_url} 
+                          alt="" 
+                          className="w-8 h-8 rounded-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-8 h-8 bg-gray-200 rounded-full flex items-center justify-center">
+                          <FiUser className="w-4 h-4 text-gray-400" />
+                        </div>
+                      )}
+                    </div>
+                  )}
                   <div className={`chat-bubble ${msg.direction === 'outgoing' ? 'chat-bubble-outgoing' : 'chat-bubble-incoming'} max-w-[70%]`}>
+                    {/* ✅ แสดงชื่อคนส่งในกลุ่ม LINE (ไม่แสดงสำหรับ bot_reply) */}
+                    {msg.direction === 'incoming' && msg.sender_info?.display_name && msg.source_type !== 'bot_reply' && (
+                      <div className="text-xs text-blue-600 font-medium mb-1">
+                        {msg.sender_info.display_name}
+                      </div>
+                    )}
+                    {/* ✅ แสดงชื่อ Admin ที่ตอบ (เฉพาะถ้าไม่ใช่ตัวเองตอบ และไม่ใช่ bot) */}
+                    {msg.direction === 'outgoing' && msg.sent_by && currentUser && msg.sent_by.id !== currentUser.id && msg.source_type !== 'bot_reply' && (
+                      <div className="text-xs text-green-600 font-medium mb-1 flex items-center gap-1">
+                        <FiUser className="w-3 h-3" />
+                        ตอบโดย: {msg.sent_by.name}
+                      </div>
+                    )}
                     {/* Source type badge */}
                     {msg.source_type === 'bot_reply' && (
                       <div className="text-xs text-gray-400 mb-1 flex items-center gap-1">

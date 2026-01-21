@@ -66,7 +66,7 @@ export async function GET(request: NextRequest) {
     // ดึง conversations พร้อม populate
     let conversations = await Conversation.find(query)
       .populate('channel_id', 'channel_name picture_url basic_id')
-      .populate('line_user_id', 'line_user_id display_name picture_url follow_status')
+      .populate('line_user_id', 'line_user_id display_name picture_url follow_status source_type group_id room_id member_count')
       .populate('tags', 'name color')
       .sort({ last_message_at: -1 })
       .lean();
@@ -113,7 +113,12 @@ export async function GET(request: NextRequest) {
         line_user_id: (conv.line_user_id as any)?.line_user_id,
         display_name: (conv.line_user_id as any)?.display_name,
         picture_url: (conv.line_user_id as any)?.picture_url,
-        follow_status: (conv.line_user_id as any)?.follow_status || 'unknown'
+        follow_status: (conv.line_user_id as any)?.follow_status || 'unknown',
+        // ✅ เพิ่มข้อมูล group/room
+        source_type: (conv.line_user_id as any)?.source_type || 'user',
+        group_id: (conv.line_user_id as any)?.group_id,
+        room_id: (conv.line_user_id as any)?.room_id,
+        member_count: (conv.line_user_id as any)?.member_count
       },
       tags: (conv.tags || []).map((tag: any) => ({
         id: tag._id,

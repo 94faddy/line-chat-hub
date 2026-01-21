@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { User } from '@/models';
 import { verifyToken } from '@/lib/auth';
+import mongoose from 'mongoose';
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,6 +16,15 @@ export async function GET(request: NextRequest) {
     const payload = verifyToken(token);
     if (!payload) {
       return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
+    }
+
+    // ✅ Validate userId is a valid ObjectId
+    if (!payload.userId || !mongoose.Types.ObjectId.isValid(payload.userId)) {
+      console.error('Invalid userId format:', payload.userId);
+      return NextResponse.json({ 
+        success: false, 
+        message: 'Token ไม่ถูกต้อง กรุณาเข้าสู่ระบบใหม่' 
+      }, { status: 401 });
     }
 
     const user = await User.findById(payload.userId).select('-password');

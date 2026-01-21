@@ -221,12 +221,18 @@ export async function POST(request: NextRequest) {
 
     await newMessage.save();
 
-    // อัพเดทการสนทนา
+    // อัพเดทการสนทนา - ✅ Mark as read เมื่อมีคนตอบ
     const preview = messagePreview || (message_type === 'text' ? content : `[${message_type}]`);
     await Conversation.findByIdAndUpdate(conversation._id, {
       last_message_preview: preview.substring(0, 100),
-      last_message_at: thaiTime
+      last_message_at: thaiTime,
+      status: 'read',      // ✅ Mark as read
+      unread_count: 0      // ✅ Reset unread count
     });
+
+    // ✅ ดึงข้อมูล user ที่ส่งข้อความ
+    const User = mongoose.models.User;
+    const senderUser = await User.findById(userId).select('name avatar').lean();
 
     // ส่ง realtime notification
     const messageData = {
@@ -238,10 +244,25 @@ export async function POST(request: NextRequest) {
       sticker_id: sticker_id || null,
       package_id: package_id || null,
       source_type: 'manual',
+      // ✅ เพิ่มข้อมูลคนส่ง
+      sent_by: senderUser ? {
+        id: userId,
+        name: senderUser.name,
+        avatar: senderUser.avatar
+      } : null,
       created_at: thaiTime
     };
 
     await notifyNewMessage(channel._id.toString(), conversation._id.toString(), messageData);
+
+    // ✅ Notify conversation update (status changed to read)
+    await notifyConversationUpdate(channel._id.toString(), {
+      id: conversation._id,
+      status: 'read',
+      last_message_preview: preview.substring(0, 100),
+      last_message_at: thaiTime,
+      unread_count: 0,
+    });
 
     return NextResponse.json({
       success: true,

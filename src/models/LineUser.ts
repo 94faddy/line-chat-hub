@@ -14,6 +14,11 @@ export interface ILineUser extends Document {
   is_spam: boolean;
   follow_status: 'following' | 'unfollowed' | 'blocked' | 'unknown';
   last_message_at?: Date;
+  // ✅ เพิ่มรองรับ Group/Room
+  source_type: 'user' | 'group' | 'room';
+  group_id?: string; // LINE Group ID (ถ้าเป็น group)
+  room_id?: string;  // LINE Room ID (ถ้าเป็น room)
+  member_count?: number; // จำนวนสมาชิกในกลุ่ม
   created_at: Date;
   updated_at: Date;
 }
@@ -62,6 +67,27 @@ const LineUserSchema = new Schema<ILineUser>(
     last_message_at: {
       type: Date,
       index: true,
+    },
+    // ✅ เพิ่มรองรับ Group/Room
+    source_type: {
+      type: String,
+      enum: ['user', 'group', 'room'],
+      default: 'user',
+      index: true,
+    },
+    group_id: {
+      type: String,
+      sparse: true,
+      index: true,
+    },
+    room_id: {
+      type: String,
+      sparse: true,
+      index: true,
+    },
+    member_count: {
+      type: Number,
+      default: 0,
     },
   },
   {

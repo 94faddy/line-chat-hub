@@ -314,3 +314,126 @@ export async function getMessageContent(
   const arrayBuffer = await response.arrayBuffer();
   return Buffer.from(arrayBuffer);
 }
+
+/**
+ * ✅ ดึงข้อมูล Profile ของสมาชิกในกลุ่ม
+ */
+export async function getGroupMemberProfile(
+  channelAccessToken: string,
+  groupId: string,
+  userId: string
+): Promise<{
+  userId: string;
+  displayName: string;
+  pictureUrl?: string;
+}> {
+  const response = await fetch(
+    `https://api.line.me/v2/bot/group/${groupId}/member/${userId}`,
+    {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${channelAccessToken}`,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const error: any = new Error(errorData.message || 'LINE API Error');
+    error.response = { data: errorData };
+    throw error;
+  }
+
+  return response.json();
+}
+
+/**
+ * ✅ ดึงข้อมูล Profile ของสมาชิกใน Room
+ */
+export async function getRoomMemberProfile(
+  channelAccessToken: string,
+  roomId: string,
+  userId: string
+): Promise<{
+  userId: string;
+  displayName: string;
+  pictureUrl?: string;
+}> {
+  const response = await fetch(
+    `https://api.line.me/v2/bot/room/${roomId}/member/${userId}`,
+    {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${channelAccessToken}`,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const error: any = new Error(errorData.message || 'LINE API Error');
+    error.response = { data: errorData };
+    throw error;
+  }
+
+  return response.json();
+}
+
+/**
+ * ✅ ดึงข้อมูลสรุปของกลุ่ม
+ */
+export async function getGroupSummary(
+  channelAccessToken: string,
+  groupId: string
+): Promise<{
+  groupId: string;
+  groupName: string;
+  pictureUrl?: string;
+}> {
+  const response = await fetch(
+    `https://api.line.me/v2/bot/group/${groupId}/summary`,
+    {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${channelAccessToken}`,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const error: any = new Error(errorData.message || 'LINE API Error');
+    error.response = { data: errorData };
+    throw error;
+  }
+
+  return response.json();
+}
+
+/**
+ * ✅ นับจำนวนสมาชิกในกลุ่ม
+ */
+export async function getGroupMemberCount(
+  channelAccessToken: string,
+  groupId: string
+): Promise<number> {
+  const response = await fetch(
+    `https://api.line.me/v2/bot/group/${groupId}/members/count`,
+    {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${channelAccessToken}`,
+      },
+    }
+  );
+
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const error: any = new Error(errorData.message || 'LINE API Error');
+    error.response = { data: errorData };
+    throw error;
+  }
+
+  const data = await response.json();
+  return data.count;
+}

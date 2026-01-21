@@ -57,7 +57,8 @@ export async function GET(request: NextRequest) {
     }
 
     const messages = await Message.find({ conversation_id: conversationId })
-      .select('direction message_type content media_url sticker_id package_id flex_content source_type is_read created_at')
+      .select('direction message_type content media_url sticker_id package_id flex_content source_type is_read sender_info sent_by created_at')
+      .populate('sent_by', 'name email avatar') // ✅ Populate ข้อมูลคนส่ง
       .sort({ created_at: 1 })
       .lean();
 
@@ -73,6 +74,13 @@ export async function GET(request: NextRequest) {
       flex_content: msg.flex_content,
       source_type: msg.source_type,
       is_read: msg.is_read,
+      sender_info: msg.sender_info, // ✅ ข้อมูลคนส่งในกลุ่ม LINE
+      // ✅ ข้อมูล admin ที่ตอบข้อความ
+      sent_by: msg.sent_by ? {
+        id: (msg.sent_by as any)._id,
+        name: (msg.sent_by as any).name,
+        avatar: (msg.sent_by as any).avatar
+      } : null,
       created_at: msg.created_at
     }));
 

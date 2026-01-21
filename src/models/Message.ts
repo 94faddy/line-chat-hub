@@ -22,6 +22,12 @@ export interface IMessage extends Document {
   read_at?: Date;
   delivered_at?: Date;
   error_message?: string;
+  // ✅ เพิ่มข้อมูลคนส่งในกลุ่ม
+  sender_info?: {
+    user_id: string;      // LINE user ID ของคนส่ง
+    display_name?: string; // ชื่อคนส่ง
+    picture_url?: string;  // รูปโปรไฟล์คนส่ง
+  };
   created_at: Date;
 }
 
@@ -91,6 +97,12 @@ const MessageSchema = new Schema<IMessage>(
     read_at: Date,
     delivered_at: Date,
     error_message: String,
+    // ✅ เพิ่มข้อมูลคนส่งในกลุ่ม
+    sender_info: {
+      user_id: String,
+      display_name: String,
+      picture_url: String,
+    },
     created_at: {
       type: Date,
       default: Date.now,
