@@ -558,6 +558,7 @@ export default function InboxPage() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const [connected, setConnected] = useState(false);
   const connectedRef = useRef(false);
+  const sseInitializedRef = useRef(false); // ✅ ป้องกัน multiple connections
   
   // Sync connectedRef with connected state
   useEffect(() => {
@@ -930,16 +931,35 @@ export default function InboxPage() {
     }
   }, [scrollToBottom, playNotificationSound]);
 
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const connectSSE = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
+    // ✅ ป้องกัน multiple connections
+    if (sseInitializedRef.current && eventSourceRef.current && eventSourceRef.current.readyState === EventSource.OPEN) {
+      console.log('SSE already connected, skipping...');
+      return;
     }
 
+    // ปิด connection เก่าถ้ามี
+    if (eventSourceRef.current) {
+      console.log('SSE Closing old connection...');
+      eventSourceRef.current.close();
+      eventSourceRef.current = null;
+    }
+
+    // Clear pending reconnect timeout
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+
+    console.log('SSE Connecting...');
+    sseInitializedRef.current = true;
     const eventSource = new EventSource('/api/sse');
     eventSourceRef.current = eventSource;
 
     eventSource.onopen = () => {
-      console.log('SSE Connected');
+      console.log('SSE Connected ✅');
       setConnected(true);
     };
 
@@ -952,22 +972,51 @@ export default function InboxPage() {
       }
     };
 
-    eventSource.onerror = () => {
-      console.log('SSE Error, reconnecting...');
+    eventSource.onerror = (e) => {
+      console.log('SSE Error, will reconnect in 5s...');
       setConnected(false);
-      setTimeout(() => connectSSE(), 5000);
+      
+      // ปิด connection ที่ error
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+        eventSourceRef.current = null;
+      }
+      
+      // ✅ Reconnect หลัง 5 วินาที (ใช้ ref เพื่อ clear ได้)
+      reconnectTimeoutRef.current = setTimeout(() => {
+        if (sseInitializedRef.current) {
+          connectSSE();
+        }
+      }, 5000);
     };
   }, [handleSSEEvent]);
 
-  // SSE Connection
+  // SSE Connection - connect ครั้งเดียวตอน mount
   useEffect(() => {
+    // ✅ ป้องกัน double mount (React Strict Mode)
+    if (sseInitializedRef.current) {
+      console.log('SSE already initialized, skipping...');
+      return;
+    }
+    
     connectSSE();
+    
     return () => {
+      console.log('SSE Cleanup...');
+      sseInitializedRef.current = false;
+      
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = null;
+      }
+      
       if (eventSourceRef.current) {
         eventSourceRef.current.close();
+        eventSourceRef.current = null;
       }
     };
-  }, [connectSSE]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ============================================
   // Polling Fallback - ทำงานเฉพาะเมื่อ SSE หลุด

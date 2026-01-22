@@ -34,14 +34,21 @@ export function addClient(userId: string, controller: ReadableStreamDefaultContr
 
 // Remove client connection
 export function removeClient(userId: string, controller: ReadableStreamDefaultController) {
-  clients.get(userId)?.delete(controller);
+  const userClients = clients.get(userId);
+  const beforeSize = userClients?.size || 0;
+  
+  userClients?.delete(controller);
+  
+  const afterSize = clients.get(userId)?.size || 0;
+  
   if (clients.get(userId)?.size === 0) {
     clients.delete(userId);
   }
   
   const allConnectedUsers = Array.from(clients.keys());
   console.log(`🔌 SSE Client disconnected: userId=${userId}`);
-  console.log(`   - Remaining connected users: [${allConnectedUsers.join(', ')}]`);
+  console.log(`   - User connections: ${beforeSize} → ${afterSize}`);
+  console.log(`   - Online users: [${allConnectedUsers.join(', ')}]`);
 }
 
 // Send event to specific user
@@ -71,7 +78,7 @@ export function sendEventToUser(userId: string, eventType: string, data: any) {
       }
     });
   } else {
-    console.log(`🟢 Connected users: [${allConnectedUsers.join(', ')}]. ⚫ No SSE clients for userId=${userId}`);
+    console.log(`⚠️ Connected users: [${allConnectedUsers.join(', ')}]. No SSE clients for userId=${userId}`);
   }
 }
 
