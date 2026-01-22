@@ -31,6 +31,13 @@ interface Channel {
   id: string;
   channel_name: string;
   followers_count?: number;
+  isOwner?: boolean;
+  permissions?: {
+    can_reply?: boolean;
+    can_view_all?: boolean;
+    can_broadcast?: boolean;
+    can_manage_tags?: boolean;
+  };
 }
 
 // Message Box interface
@@ -523,7 +530,11 @@ export default function BroadcastPage() {
       const res = await fetch('/api/channels');
       const data = await res.json();
       if (data.success) {
-        setChannels(data.data);
+        // กรองเฉพาะ channels ที่มีสิทธิ์ broadcast (isOwner หรือ can_broadcast = true)
+        const broadcastableChannels = data.data.filter((ch: Channel) => 
+          ch.isOwner || ch.permissions?.can_broadcast === true
+        );
+        setChannels(broadcastableChannels);
       }
     } catch (error) {
       console.error('Error fetching channels:', error);

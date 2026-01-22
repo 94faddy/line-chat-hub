@@ -46,6 +46,7 @@ interface QuickReply {
   shortcut?: string;
   message_type: string;
   content: string;
+  flex_content?: any;
   media_url?: string;
   channel_id?: string;
 }
@@ -556,6 +557,12 @@ export default function InboxPage() {
   // SSE connection
   const eventSourceRef = useRef<EventSource | null>(null);
   const [connected, setConnected] = useState(false);
+  const connectedRef = useRef(false);
+  
+  // Sync connectedRef with connected state
+  useEffect(() => {
+    connectedRef.current = connected;
+  }, [connected]);
   
   // Image Modal state
   const [imageModalUrl, setImageModalUrl] = useState<string | null>(null);
@@ -583,6 +590,13 @@ export default function InboxPage() {
   const [savingNotes, setSavingNotes] = useState(false);
   const [savingAssign, setSavingAssign] = useState(false);
   const lastScrollTop = useRef(0);
+
+  // ✅ File Upload states
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Scroll to bottom function
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'smooth') => {
@@ -949,13 +963,26 @@ export default function InboxPage() {
   }, [connectSSE]);
 
   // ============================================
-  // Polling Fallback - ดึงข้อมูลใหม่ทุก 5 วินาที
+  // Polling Fallback - ทำงานเฉพาะเมื่อ SSE หลุด
   // ============================================
   const lastCheckRef = useRef<Date>(new Date());
   const previousUnreadCountRef = useRef<number>(0);
 
   useEffect(() => {
+    // ถ้า SSE เชื่อมต่ออยู่ ไม่ต้อง poll
+    if (connected) {
+      console.log('✅ SSE connected - Polling disabled');
+      return;
+    }
+
+    console.log('⚠️ SSE disconnected - Polling enabled (every 30s)');
+
     const pollInterval = setInterval(async () => {
+      // เช็คอีกครั้งว่า SSE กลับมา connect หรือยัง (ใช้ ref เพื่อให้ได้ค่าล่าสุด)
+      if (connectedRef.current) {
+        return;
+      }
+
       try {
         // ดึง conversations ใหม่
         const res = await fetch('/api/messages/conversations');
@@ -969,7 +996,7 @@ export default function InboxPage() {
           
           // ถ้ามี unread เพิ่มขึ้น = มีข้อความใหม่
           if (totalUnread > previousUnreadCountRef.current) {
-            console.log(`📬 New messages detected! Unread: ${previousUnreadCountRef.current} → ${totalUnread}`);
+            console.log(`📬 [Polling] New messages detected! Unread: ${previousUnreadCountRef.current} → ${totalUnread}`);
             
             // หา conversation ที่มี unread เพิ่ม
             const currentConv = selectedConversationRef.current;
@@ -1028,12 +1055,12 @@ export default function InboxPage() {
           }
         }
       } catch (error) {
-        console.error('Polling error:', error);
+        console.error('[Polling] Error:', error);
       }
-    }, 5000); // Poll ทุก 5 วินาที
+    }, 30000); // Poll ทุก 30 วินาที (เฉพาะเมื่อ SSE หลุด)
 
     return () => clearInterval(pollInterval);
-  }, [playNotificationSound, scrollToBottom, messages]);
+  }, [connected, playNotificationSound, scrollToBottom, messages]);
 
   useEffect(() => {
     fetchChannels();
@@ -1312,48 +1339,197 @@ export default function InboxPage() {
     inputRef.current?.focus();
   };
 
-  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !selectedConversation) return;
+  // ============================================
+  // File Upload Handlers (Drag & Drop, Paste, Click)
+  // ============================================
+  
+  // จัดการไฟล์ที่เลือก (จากทุกแหล่ง)
+  const handleFilesSelected = useCallback((files: FileList | File[]) => {
+    const fileArray = Array.from(files);
+    const validFiles = fileArray.filter(file => {
+      // รองรับ image, video, audio
+      if (file.type.startsWith('image/') || file.type.startsWith('video/') || file.type.startsWith('audio/')) {
+        return true;
+      }
+      return false;
+    });
 
-    const formData = new FormData();
-    formData.append('file', file);
+    if (validFiles.length === 0) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'ไฟล์ไม่รองรับ',
+        text: 'รองรับเฉพาะไฟล์รูปภาพ, วิดีโอ และเสียง',
+        timer: 2000,
+        showConfirmButton: false,
+      });
+      return;
+    }
+
+    setPendingFiles(prev => [...prev, ...validFiles]);
+  }, []);
+
+  // Drag & Drop handlers
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+      handleFilesSelected(files);
+    }
+  }, [handleFilesSelected]);
+
+  // Paste handler (Ctrl+V)
+  const handlePaste = useCallback((e: ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const files: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          // สร้างชื่อไฟล์ใหม่
+          const newFile = new File([file], `pasted-image-${Date.now()}.png`, { type: file.type });
+          files.push(newFile);
+        }
+      }
+    }
+
+    if (files.length > 0) {
+      handleFilesSelected(files);
+      e.preventDefault();
+    }
+  }, [handleFilesSelected]);
+
+  // เพิ่ม paste event listener
+  useEffect(() => {
+    document.addEventListener('paste', handlePaste);
+    return () => document.removeEventListener('paste', handlePaste);
+  }, [handlePaste]);
+
+  // ลบไฟล์ออกจาก pending
+  const handleRemovePendingFile = useCallback((index: number) => {
+    setPendingFiles(prev => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // อัพโหลดและส่งไฟล์
+  const handleUploadAndSend = async () => {
+    if (pendingFiles.length === 0 || !selectedConversation) return;
+
+    setIsUploading(true);
+    setUploadProgress(0);
+
+    const totalFiles = pendingFiles.length;
+    let uploadedCount = 0;
+    let successCount = 0;
 
     try {
-      const uploadRes = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
+      for (const file of pendingFiles) {
+        // อัพโหลดไฟล์
+        const formData = new FormData();
+        formData.append('file', file);
 
-      const uploadData = await uploadRes.json();
-      if (!uploadData.success) {
-        throw new Error(uploadData.message);
+        const uploadRes = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData,
+        });
+
+        const uploadData = await uploadRes.json();
+        
+        if (!uploadData.success) {
+          console.error('Upload failed:', uploadData.message);
+          uploadedCount++;
+          setUploadProgress(Math.round((uploadedCount / totalFiles) * 100));
+          continue;
+        }
+
+        // กำหนด message type
+        let messageType = 'image';
+        if (file.type.startsWith('video/')) messageType = 'video';
+        else if (file.type.startsWith('audio/')) messageType = 'audio';
+
+        // ส่งข้อความ
+        const sendRes = await fetch('/api/messages/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: selectedConversation.id,
+            message_type: messageType,
+            media_url: uploadData.data.url,
+          }),
+        });
+
+        const sendData = await sendRes.json();
+        if (sendData.success) {
+          successCount++;
+        }
+
+        uploadedCount++;
+        setUploadProgress(Math.round((uploadedCount / totalFiles) * 100));
       }
 
-      const sendRes = await fetch('/api/messages/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          conversation_id: selectedConversation.id,
-          message_type: 'image',
-          media_url: uploadData.data.url,
-        }),
-      });
-
-      const sendData = await sendRes.json();
-      if (sendData.success) {
-        fetchMessages(selectedConversation.id);
-        fetchConversations();
-        setTimeout(() => scrollToBottom('smooth'), 150);
+      // แสดงผลลัพธ์
+      if (successCount === totalFiles) {
+        Swal.fire({
+          icon: 'success',
+          title: 'ส่งสำเร็จ!',
+          text: `ส่ง ${successCount} ไฟล์เรียบร้อยแล้ว`,
+          timer: 2000,
+          showConfirmButton: false,
+        });
+      } else if (successCount > 0) {
+        Swal.fire({
+          icon: 'warning',
+          title: 'ส่งบางส่วนสำเร็จ',
+          text: `ส่งสำเร็จ ${successCount}/${totalFiles} ไฟล์`,
+        });
+      } else {
+        Swal.fire({
+          icon: 'error',
+          title: 'ส่งไม่สำเร็จ',
+          text: 'ไม่สามารถส่งไฟล์ได้',
+        });
       }
+
+      // รีเฟรช
+      fetchMessages(selectedConversation.id);
+      fetchConversations();
+      setTimeout(() => scrollToBottom('smooth'), 150);
+
     } catch (error: any) {
       Swal.fire({
         icon: 'error',
-        title: 'อัพโหลดรูปไม่สำเร็จ',
-        text: error.message || 'เกิดข้อผิดพลาด',
+        title: 'เกิดข้อผิดพลาด',
+        text: error.message || 'ไม่สามารถอัพโหลดไฟล์ได้',
       });
+    } finally {
+      setPendingFiles([]);
+      setIsUploading(false);
+      setUploadProgress(0);
     }
+  };
 
+  // เดิม: handleImageUpload จาก input file
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0 || !selectedConversation) return;
+
+    handleFilesSelected(files);
     e.target.value = '';
   };
 
@@ -1555,11 +1731,54 @@ export default function InboxPage() {
     }
   };
 
-  const handleQuickReplySelect = (reply: QuickReply) => {
-    setNewMessage(reply.content);
+  const handleQuickReplySelect = async (reply: QuickReply) => {
     setShowQuickReplies(false);
     setShowShortcutDropdown(false);
-    inputRef.current?.focus();
+    
+    // ถ้าเป็น flex message ให้ส่งตรงเลย
+    if (reply.message_type === 'flex' && reply.flex_content && selectedConversation) {
+      setSendingMessage(true);
+      try {
+        const res = await fetch('/api/messages/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: selectedConversation.id,
+            message_type: 'flex',
+            content: reply.content,
+            flex_content: reply.flex_content,
+            alt_text: reply.content
+          }),
+        });
+
+        const data = await res.json();
+        if (data.success) {
+          // เพิ่ม use_count
+          fetch(`/api/quick-replies/${reply.id}`, { method: 'GET' });
+          fetchMessages(selectedConversation.id);
+          fetchConversations();
+          setTimeout(() => scrollToBottom('smooth'), 150);
+        } else {
+          Swal.fire({
+            icon: 'error',
+            title: 'ส่ง Flex Message ไม่สำเร็จ',
+            text: data.message || 'เกิดข้อผิดพลาด',
+          });
+        }
+      } catch (error) {
+        Swal.fire({
+          icon: 'error',
+          title: 'เกิดข้อผิดพลาด',
+          text: 'ไม่สามารถส่ง Flex Message ได้',
+        });
+      } finally {
+        setSendingMessage(false);
+      }
+    } else {
+      // ถ้าเป็นข้อความธรรมดา ให้ใส่ใน textarea
+      setNewMessage(reply.content);
+      inputRef.current?.focus();
+    }
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -1606,11 +1825,22 @@ export default function InboxPage() {
       }
     }
     
-    // Enter = ส่งข้อความ, Shift+Enter = ขึ้นบรรทัดใหม่
+    // Enter = ส่งข้อความ/ไฟล์, Shift+Enter = ขึ้นบรรทัดใหม่
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (newMessage.trim()) {
-        handleSendMessage(e as any);
+      
+      // ถ้ามีไฟล์หรือข้อความ → ส่ง
+      if (pendingFiles.length > 0 || newMessage.trim()) {
+        (async () => {
+          // ส่งไฟล์ก่อน (ถ้ามี)
+          if (pendingFiles.length > 0) {
+            await handleUploadAndSend();
+          }
+          // ส่งข้อความ (ถ้ามี)
+          if (newMessage.trim()) {
+            handleSendMessage(e as any);
+          }
+        })();
       }
     }
   };
@@ -1956,7 +2186,23 @@ export default function InboxPage() {
       </div>
 
       {/* Chat Area */}
-      <div className="flex-1 flex flex-col bg-gray-50">
+      <div 
+        className="flex-1 flex flex-col bg-gray-50 relative"
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+      >
+        {/* Drag & Drop Overlay */}
+        {isDragging && selectedConversation && (
+          <div className="absolute inset-0 z-50 bg-green-500/20 border-4 border-dashed border-green-500 flex items-center justify-center backdrop-blur-sm">
+            <div className="text-center">
+              <FiImage className="w-16 h-16 text-green-600 mx-auto mb-4" />
+              <p className="text-xl font-semibold text-green-700">วางไฟล์ที่นี่</p>
+              <p className="text-sm text-green-600 mt-1">รองรับ รูปภาพ, วิดีโอ และเสียง</p>
+            </div>
+          </div>
+        )}
+
         {selectedConversation ? (
           <>
             {/* Chat Header */}
@@ -2420,6 +2666,81 @@ export default function InboxPage() {
              selectedConversation.line_user?.follow_status !== 'unfollowed' &&
              selectedConversation.line_user?.follow_status !== 'blocked' ? (
             <form onSubmit={handleSendMessage} className={`bg-white ${!showQuickReplies ? 'border-t border-gray-200' : ''} p-4`}>
+              
+              {/* ✅ File Preview Section */}
+              {pendingFiles.length > 0 && (
+                <div className="mb-3 p-3 bg-gray-50 rounded-lg border border-gray-200">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-700">
+                      ไฟล์ที่จะส่ง ({pendingFiles.length})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setPendingFiles([])}
+                      className="text-xs text-red-500 hover:text-red-700"
+                    >
+                      ลบทั้งหมด
+                    </button>
+                  </div>
+                  
+                  {/* File Grid - ขยายขนาด preview */}
+                  <div className="grid grid-cols-3 gap-3">
+                    {pendingFiles.map((file, index) => (
+                      <div key={index} className="relative group">
+                        {/* Preview */}
+                        {file.type.startsWith('image/') ? (
+                          <img
+                            src={URL.createObjectURL(file)}
+                            alt={file.name}
+                            className="w-full h-48 object-cover rounded-lg border border-gray-200"
+                          />
+                        ) : file.type.startsWith('video/') ? (
+                          <div className="w-full h-48 bg-gray-200 rounded-lg flex items-center justify-center">
+                            <span className="text-4xl">🎬</span>
+                          </div>
+                        ) : (
+                          <div className="w-full h-48 bg-gray-200 rounded-lg flex items-center justify-center">
+                            <span className="text-4xl">🎵</span>
+                          </div>
+                        )}
+                        
+                        {/* File Name */}
+                        <p className="text-xs text-gray-500 truncate mt-1" title={file.name}>
+                          {file.name}
+                        </p>
+                        
+                        {/* Remove Button */}
+                        <button
+                          type="button"
+                          onClick={() => handleRemovePendingFile(index)}
+                          className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 text-white rounded-full 
+                                     flex items-center justify-center opacity-0 group-hover:opacity-100 
+                                     transition-opacity hover:bg-red-600 shadow-md"
+                        >
+                          <FiX className="w-4 h-4" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                  
+                  {/* Upload Progress */}
+                  {isUploading && (
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between text-sm mb-1">
+                        <span className="text-gray-600">กำลังอัพโหลด...</span>
+                        <span className="text-green-600 font-medium">{uploadProgress}%</span>
+                      </div>
+                      <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+                        <div 
+                          className="h-full bg-green-500 transition-all duration-300"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+              
               {/* Textarea on top */}
               <div className="relative mb-3">
                 <textarea
@@ -2427,7 +2748,7 @@ export default function InboxPage() {
                   value={newMessage}
                   onChange={handleInputChange}
                   onKeyDown={handleInputKeyDown}
-                  placeholder={`พิมพ์ข้อความ... (พิมพ์ / เพื่อใช้ทางลัด)\nEnter: ส่ง, Shift + Enter: ขึ้นบรรทัดใหม่`}
+                  placeholder={`พิมพ์ข้อความ... (พิมพ์ / เพื่อใช้ทางลัด)\nEnter: ส่ง, Shift + Enter: ขึ้นบรรทัดใหม่\n📎 ลากไฟล์มาวาง หรือ Ctrl+V เพื่อวางรูป`}
                   rows={3}
                   className="input w-full py-3 px-4 resize-none min-h-[80px]"
                   style={{ lineHeight: '1.5' }}
@@ -2486,18 +2807,20 @@ export default function InboxPage() {
                     )}
                   </div>
 
-                  {/* Image Upload */}
+                  {/* File Upload (รองรับ image, video, audio) */}
                   <input
+                    ref={fileInputRef}
                     type="file"
-                    accept="image/*"
+                    accept="image/*,video/*,audio/*"
+                    multiple
                     onChange={handleImageUpload}
                     className="hidden"
-                    id="image-upload"
+                    id="file-upload"
                   />
                   <label
-                    htmlFor="image-upload"
+                    htmlFor="file-upload"
                     className="p-2 hover:bg-gray-100 rounded-lg cursor-pointer"
-                    title="ส่งรูปภาพ"
+                    title="แนบไฟล์ (รูปภาพ, วิดีโอ, เสียง) หรือลากมาวาง"
                   >
                     <FiPaperclip className="w-5 h-5 text-gray-500" />
                   </label>
@@ -2537,13 +2860,24 @@ export default function InboxPage() {
                   </div>
                 </div>
                 
-                {/* Send Button */}
+                {/* Send Button - รวมส่งข้อความและไฟล์ */}
                 <button
-                  type="submit"
-                  disabled={!newMessage.trim() || sendingMessage}
+                  type="button"
+                  onClick={async (e) => {
+                    e.preventDefault();
+                    // ถ้ามีไฟล์ → ส่งไฟล์ก่อน
+                    if (pendingFiles.length > 0) {
+                      await handleUploadAndSend();
+                    }
+                    // ถ้ามีข้อความ → ส่งข้อความ
+                    if (newMessage.trim()) {
+                      handleSendMessage(e as any);
+                    }
+                  }}
+                  disabled={(!newMessage.trim() && pendingFiles.length === 0) || sendingMessage || isUploading}
                   className="btn btn-primary px-6 py-2"
                 >
-                  {sendingMessage ? (
+                  {sendingMessage || isUploading ? (
                     <div className="spinner w-5 h-5 border-white border-t-transparent" />
                   ) : (
                     <span className="font-medium">ส่ง</span>

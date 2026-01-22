@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { verifyToken } from '@/lib/auth';
+import { uploadFileToCloud, isCloudStorageEnabled } from '@/lib/nexzcloud';
 import { writeFile, mkdir } from 'fs/promises';
 import path from 'path';
 import { existsSync } from 'fs';
@@ -34,10 +35,18 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData();
     const file = formData.get('file') as File;
-    const type = formData.get('type') as string || 'image';
+    let type = formData.get('type') as string;
 
     if (!file) {
       return NextResponse.json({ success: false, message: 'กรุณาเลือกไฟล์' }, { status: 400 });
+    }
+
+    // ✅ Auto-detect type from mime type if not specified
+    if (!type) {
+      if (file.type.startsWith('image/')) type = 'image';
+      else if (file.type.startsWith('video/')) type = 'video';
+      else if (file.type.startsWith('audio/')) type = 'audio';
+      else type = 'document';
     }
 
     // Validate file type
@@ -57,7 +66,31 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    // Create uploads directory
+    // ✅ ถ้าเปิดใช้ Cloud Storage → upload ไป NexzCloud
+    if (isCloudStorageEnabled()) {
+      console.log(`☁️ [Upload] Uploading to NexzCloud: ${file.name}`);
+      const result = await uploadFileToCloud(file, type);
+      
+      if (result.success && result.url) {
+        console.log(`✅ [Upload] Cloud URL: ${result.url}`);
+        return NextResponse.json({
+          success: true,
+          message: 'File uploaded to cloud successfully',
+          data: {
+            url: result.url,
+            filename: result.filename,
+            originalName: file.name,
+            size: file.size,
+            type: file.type,
+            storage: 'cloud'
+          }
+        });
+      }
+      
+      console.log(`⚠️ [Upload] Cloud upload failed, falling back to local storage`);
+    }
+
+    // Fallback: Local storage
     const uploadDir = path.join(process.cwd(), 'public', 'uploads', type + 's');
     if (!existsSync(uploadDir)) {
       await mkdir(uploadDir, { recursive: true });
@@ -86,7 +119,8 @@ export async function POST(request: NextRequest) {
         filename: filename,
         originalName: file.name,
         size: file.size,
-        type: file.type
+        type: file.type,
+        storage: 'local'
       }
     });
   } catch (error) {

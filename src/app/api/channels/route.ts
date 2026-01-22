@@ -31,6 +31,9 @@ export async function GET(request: NextRequest) {
       status: 'active'
     });
 
+    // สร้าง map เก็บ permissions ของแต่ละ channel
+    const channelPermissionsMap = new Map<string, any>();
+
     // รวบรวม channel IDs ที่มีสิทธิ์เข้าถึงผ่าน admin permissions
     let additionalChannelIds: mongoose.Types.ObjectId[] = [];
     let ownerIdsForAllChannels: mongoose.Types.ObjectId[] = [];
@@ -38,8 +41,12 @@ export async function GET(request: NextRequest) {
     for (const perm of adminPerms) {
       if (perm.channel_id) {
         additionalChannelIds.push(perm.channel_id);
+        // เก็บ permissions ของ channel นี้
+        channelPermissionsMap.set(perm.channel_id.toString(), perm.permissions || {});
       } else if (perm.owner_id) {
         ownerIdsForAllChannels.push(perm.owner_id);
+        // เก็บ permissions แบบ all channels ไว้ก่อน (จะ apply ทีหลัง)
+        channelPermissionsMap.set(`owner_${perm.owner_id.toString()}`, perm.permissions || {});
       }
     }
 
@@ -62,19 +69,51 @@ export async function GET(request: NextRequest) {
     // รวม channels ทั้งหมด (ไม่ซ้ำกัน)
     const channelMap = new Map();
     
+    // Owner channels - มีสิทธิ์ทุกอย่าง
     ownedChannels.forEach(ch => {
-      channelMap.set(ch._id.toString(), { ...ch, isOwner: true });
+      channelMap.set(ch._id.toString(), { 
+        ...ch, 
+        isOwner: true,
+        permissions: {
+          can_reply: true,
+          can_view_all: true,
+          can_broadcast: true,
+          can_manage_tags: true
+        }
+      });
     });
     
+    // Additional channels (specific channel permissions)
     additionalChannels.forEach(ch => {
       if (!channelMap.has(ch._id.toString())) {
-        channelMap.set(ch._id.toString(), { ...ch, isOwner: false });
+        const perms = channelPermissionsMap.get(ch._id.toString()) || {};
+        channelMap.set(ch._id.toString(), { 
+          ...ch, 
+          isOwner: false,
+          permissions: {
+            can_reply: perms.can_reply ?? true,
+            can_view_all: perms.can_view_all ?? false,
+            can_broadcast: perms.can_broadcast ?? false,
+            can_manage_tags: perms.can_manage_tags ?? false
+          }
+        });
       }
     });
     
+    // Owner's all channels (permissions from "all channels" invite)
     ownerChannels.forEach(ch => {
       if (!channelMap.has(ch._id.toString())) {
-        channelMap.set(ch._id.toString(), { ...ch, isOwner: false });
+        const perms = channelPermissionsMap.get(`owner_${ch.user_id.toString()}`) || {};
+        channelMap.set(ch._id.toString(), { 
+          ...ch, 
+          isOwner: false,
+          permissions: {
+            can_reply: perms.can_reply ?? true,
+            can_view_all: perms.can_view_all ?? false,
+            can_broadcast: perms.can_broadcast ?? false,
+            can_manage_tags: perms.can_manage_tags ?? false
+          }
+        });
       }
     });
 
@@ -86,7 +125,9 @@ export async function GET(request: NextRequest) {
       basic_id: ch.basic_id,
       picture_url: ch.picture_url,
       status: ch.status,
+      followers_count: ch.followers_count,
       isOwner: ch.isOwner,
+      permissions: ch.permissions,
       created_at: ch.created_at
     }));
 

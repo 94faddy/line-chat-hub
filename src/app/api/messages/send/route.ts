@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { conversation_id, message_type, content, media_url, package_id, sticker_id } = body;
+    const { conversation_id, message_type, content, media_url, package_id, sticker_id, flex_content, alt_text } = body;
 
     if (!conversation_id || !message_type) {
       return NextResponse.json({ success: false, message: 'กรุณากรอกข้อมูลให้ครบ' }, { status: 400 });
@@ -174,6 +174,41 @@ export async function POST(request: NextRequest) {
         stickerId: sticker_id
       };
       messagePreview = '[สติกเกอร์]';
+    } else if (message_type === 'flex') {
+      if (!flex_content) {
+        return NextResponse.json({ success: false, message: 'กรุณาระบุ Flex Message content' }, { status: 400 });
+      }
+      
+      console.log('📦 [Send Flex] Sending flex message');
+      
+      // flex_content อาจเป็น string หรือ object
+      let flexData = flex_content;
+      if (typeof flex_content === 'string') {
+        try {
+          flexData = JSON.parse(flex_content);
+        } catch (e) {
+          return NextResponse.json({ success: false, message: 'Flex Message JSON ไม่ถูกต้อง' }, { status: 400 });
+        }
+      }
+      
+      // รองรับทั้งรูปแบบจาก Simulator (bubble/carousel) และรูปแบบเต็ม (flex)
+      if (flexData.type === 'bubble' || flexData.type === 'carousel') {
+        lineMessage = {
+          type: 'flex',
+          altText: alt_text || content || 'Flex Message',
+          contents: flexData
+        };
+      } else if (flexData.type === 'flex') {
+        lineMessage = {
+          type: 'flex',
+          altText: flexData.altText || alt_text || content || 'Flex Message',
+          contents: flexData.contents
+        };
+      } else {
+        return NextResponse.json({ success: false, message: 'Flex Message format ไม่ถูกต้อง' }, { status: 400 });
+      }
+      
+      messagePreview = alt_text || content || '[Flex Message]';
     } else {
       return NextResponse.json({ success: false, message: 'ประเภทข้อความไม่ถูกต้อง' }, { status: 400 });
     }
@@ -212,6 +247,7 @@ export async function POST(request: NextRequest) {
       message_type,
       content: content || null,
       media_url: media_url || null,
+      flex_content: message_type === 'flex' ? (typeof flex_content === 'string' ? flex_content : JSON.stringify(flex_content)) : null,
       sticker_id: sticker_id || null,
       package_id: package_id || null,
       sent_by: userId,
@@ -241,6 +277,7 @@ export async function POST(request: NextRequest) {
       message_type,
       content: content || null,
       media_url: media_url || null,
+      flex_content: message_type === 'flex' ? (typeof flex_content === 'string' ? flex_content : JSON.stringify(flex_content)) : null,
       sticker_id: sticker_id || null,
       package_id: package_id || null,
       source_type: 'manual',

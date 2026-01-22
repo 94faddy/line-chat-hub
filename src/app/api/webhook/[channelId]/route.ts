@@ -18,7 +18,8 @@ import {
   getGroupSummary,
   getGroupMemberCount
 } from '@/lib/line';
-import { notifyNewMessage, notifyConversationUpdate } from '@/lib/notifier';
+import { notifyNewMessage, notifyConversationUpdate, notifyNewConversation } from '@/lib/notifier';
+import { uploadMediaFromBuffer, isCloudStorageEnabled } from '@/lib/nexzcloud';
 import { writeFile, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
 import path from 'path';
@@ -159,7 +160,7 @@ async function handleEvent(event: any, channel: any) {
       }
 
       // ดึงหรือสร้าง Conversation
-      let conversation = await getOrCreateConversation(channel._id, lineUser._id);
+      const { conversation, isNew: isNewConversation } = await getOrCreateConversation(channel._id, lineUser._id);
       if (!conversation) {
         console.error('Failed to get/create conversation');
         return;
@@ -173,7 +174,30 @@ async function handleEvent(event: any, channel: any) {
       // อัพเดทการสนทนา - ✅ ส่ง event.timestamp ด้วย
       await updateConversation(conversation._id, message, direction, senderInfo, event.timestamp);
 
-      // ส่ง realtime notification
+      // ✅ ถ้าเป็น conversation ใหม่ → ส่ง notifyNewConversation
+      if (isNewConversation) {
+        const newConvData = await Conversation.findById(conversation._id)
+          .populate('channel_id', 'channel_name picture_url basic_id')
+          .populate('line_user_id', 'line_user_id display_name picture_url source_type group_id room_id')
+          .lean();
+          
+        if (newConvData) {
+          console.log('📨 [Webhook] New conversation created, sending notification');
+          await notifyNewConversation(channel._id.toString(), {
+            id: newConvData._id,
+            channel_id: newConvData.channel_id,
+            line_user_id: newConvData.line_user_id,
+            status: newConvData.status,
+            last_message_preview: newConvData.last_message_preview,
+            last_message_at: newConvData.last_message_at,
+            unread_count: newConvData.unread_count,
+            channel: (newConvData as any).channel_id,
+            line_user: (newConvData as any).line_user_id,
+          });
+        }
+      }
+
+      // ส่ง realtime notification สำหรับข้อความใหม่
       await notifyNewMessage(channel._id.toString(), conversation._id.toString(), {
         id: savedMessage._id,
         direction,
@@ -188,20 +212,22 @@ async function handleEvent(event: any, channel: any) {
         created_at: savedMessage.created_at
       });
 
-      // Notify conversation update
-      const updatedConv = await Conversation.findById(conversation._id)
-        .populate('channel_id', 'channel_name picture_url basic_id')
-        .populate('line_user_id', 'line_user_id display_name picture_url source_type group_id room_id')
-        .lean();
-        
-      if (updatedConv) {
-        await notifyConversationUpdate(channel._id.toString(), {
-          id: updatedConv._id,
-          status: updatedConv.status,
-          last_message_preview: updatedConv.last_message_preview,
-          last_message_at: updatedConv.last_message_at,
-          unread_count: updatedConv.unread_count,
-        });
+      // Notify conversation update (สำหรับ conversation ที่มีอยู่แล้ว)
+      if (!isNewConversation) {
+        const updatedConv = await Conversation.findById(conversation._id)
+          .populate('channel_id', 'channel_name picture_url basic_id')
+          .populate('line_user_id', 'line_user_id display_name picture_url source_type group_id room_id')
+          .lean();
+          
+        if (updatedConv) {
+          await notifyConversationUpdate(channel._id.toString(), {
+            id: updatedConv._id,
+            status: updatedConv.status,
+            last_message_preview: updatedConv.last_message_preview,
+            last_message_at: updatedConv.last_message_at,
+            unread_count: updatedConv.unread_count,
+          });
+        }
       }
 
     } catch (error) {
@@ -387,7 +413,7 @@ async function getSenderInfo(
   }
 }
 
-async function getOrCreateConversation(channelId: any, lineUserId: any) {
+async function getOrCreateConversation(channelId: any, lineUserId: any): Promise<{ conversation: any; isNew: boolean }> {
   // ค้นหาการสนทนาที่มีอยู่
   let existingConv = await Conversation.findOne({
     channel_id: channelId,
@@ -395,7 +421,7 @@ async function getOrCreateConversation(channelId: any, lineUserId: any) {
   });
 
   if (existingConv) {
-    return existingConv;
+    return { conversation: existingConv, isNew: false };
   }
 
   // สร้างการสนทนาใหม่
@@ -407,7 +433,7 @@ async function getOrCreateConversation(channelId: any, lineUserId: any) {
   });
 
   await newConv.save();
-  return newConv;
+  return { conversation: newConv, isNew: true };
 }
 
 async function saveMessage(event: any, conversation: any, channel: any, lineUser: any, direction: string, senderInfo?: any) {
@@ -491,6 +517,20 @@ async function downloadAndStoreMedia(accessToken: string, messageId: string, med
   try {
     const mediaContent = await getMessageContent(accessToken, messageId);
     
+    // ✅ ถ้าเปิดใช้ Cloud Storage → upload ไป NexzCloud
+    if (isCloudStorageEnabled()) {
+      console.log(`☁️ [Webhook] Uploading to NexzCloud: ${mediaType}`);
+      const cloudUrl = await uploadMediaFromBuffer(mediaContent, mediaType, uuidv4());
+      
+      if (cloudUrl) {
+        console.log(`✅ [Webhook] Cloud URL: ${cloudUrl}`);
+        return cloudUrl;
+      }
+      
+      console.log(`⚠️ [Webhook] Cloud upload failed, falling back to local storage`);
+    }
+    
+    // Fallback: Local storage
     let ext = '.bin';
     switch (mediaType) {
       case 'image': ext = '.jpg'; break;
