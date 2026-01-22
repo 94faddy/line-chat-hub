@@ -6,7 +6,7 @@ import Link from 'next/link';
 import { 
   FiMessageCircle, FiInbox, FiRadio, FiUsers, FiSettings, 
   FiLogOut, FiMenu, FiX, FiChevronDown, FiPlus,
-  FiZap, FiUser
+  FiZap, FiUser, FiExternalLink, FiHome
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 
@@ -17,6 +17,8 @@ interface User {
   role: string;
   avatar?: string;
 }
+
+const CHAT_DOMAIN = process.env.NEXT_PUBLIC_CHAT_DOMAIN || 'https://chat.bevchat.pro';
 
 export default function DashboardLayout({
   children,
@@ -70,12 +72,14 @@ export default function DashboardLayout({
     }
   };
 
+  // เมนูหลัก - Inbox เปิด new tab ไป chat.bevchat.pro
   const menuItems = [
-    { href: '/dashboard', icon: FiInbox, label: 'Inbox', badge: 0 },
-    { href: '/dashboard/channels', icon: FiRadio, label: 'LINE Channels' },
-    { href: '/dashboard/broadcast', icon: FiMessageCircle, label: 'Broadcast' },
-    { href: '/dashboard/team', icon: FiUsers, label: 'Team' },
-    { href: '/dashboard/settings', icon: FiSettings, label: 'Settings' },
+    { href: '/dashboard', icon: FiHome, label: 'Dashboard', isInternal: true },
+    { href: CHAT_DOMAIN, icon: FiInbox, label: 'Inbox', isInternal: false, isExternal: true },
+    { href: '/dashboard/channels', icon: FiRadio, label: 'LINE Channels', isInternal: true },
+    { href: '/dashboard/broadcast', icon: FiMessageCircle, label: 'Broadcast', isInternal: true },
+    { href: '/dashboard/team', icon: FiUsers, label: 'Team', isInternal: true },
+    { href: '/dashboard/settings', icon: FiSettings, label: 'Settings', isInternal: true },
   ];
 
   if (loading) {
@@ -140,25 +144,44 @@ export default function DashboardLayout({
           {/* Navigation */}
           <nav className="flex-1 px-3 py-2 space-y-1 overflow-y-auto">
             {menuItems.map((item) => {
-              const isActive = pathname === item.href || 
-                (item.href !== '/dashboard' && pathname?.startsWith(item.href));
+              const isActive = item.isInternal && (
+                pathname === item.href || 
+                (item.href !== '/dashboard' && pathname?.startsWith(item.href))
+              );
               
+              // External link (Inbox) - เปิด new tab
+              if (item.isExternal) {
+                return (
+                  <a
+                    key={item.href}
+                    href={item.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="sidebar-item group"
+                    onClick={() => setMobileMenuOpen(false)}
+                  >
+                    <item.icon className="w-5 h-5 flex-shrink-0" />
+                    {sidebarOpen && (
+                      <>
+                        <span className="flex-1">{item.label}</span>
+                        <FiExternalLink className="w-4 h-4 text-gray-400 group-hover:text-green-500" />
+                      </>
+                    )}
+                  </a>
+                );
+              }
+              
+              // Internal link
               return (
                 <Link
                   key={item.href}
                   href={item.href}
                   className={`sidebar-item ${isActive ? 'active' : ''}`}
+                  onClick={() => setMobileMenuOpen(false)}
                 >
                   <item.icon className="w-5 h-5 flex-shrink-0" />
                   {sidebarOpen && (
-                    <>
-                      <span className="flex-1">{item.label}</span>
-                      {item.badge !== undefined && item.badge > 0 && (
-                        <span className="bg-red-500 text-white text-xs px-2 py-0.5 rounded-full">
-                          {item.badge}
-                        </span>
-                      )}
-                    </>
+                    <span className="flex-1">{item.label}</span>
                   )}
                 </Link>
               );
@@ -244,7 +267,17 @@ export default function DashboardLayout({
           </div>
           
           <div className="flex items-center gap-4">
-            {/* Notifications, etc */}
+            {/* Quick access to Inbox */}
+            <a
+              href={CHAT_DOMAIN}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 bg-green-50 hover:bg-green-100 text-green-700 rounded-lg transition-colors"
+            >
+              <FiInbox className="w-5 h-5" />
+              <span className="hidden sm:inline font-medium">เปิด Inbox</span>
+              <FiExternalLink className="w-4 h-4" />
+            </a>
           </div>
         </header>
 

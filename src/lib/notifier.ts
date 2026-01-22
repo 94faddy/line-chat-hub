@@ -71,7 +71,7 @@ export function sendEventToUser(userId: string, eventType: string, data: any) {
       }
     });
   } else {
-    console.log(`⚠️ No SSE clients for userId=${userId}. Connected users: [${allConnectedUsers.join(', ')}]`);
+    console.log(`🟢 Connected users: [${allConnectedUsers.join(', ')}]. ⚫ No SSE clients for userId=${userId}`);
   }
 }
 

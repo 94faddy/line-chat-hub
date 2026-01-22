@@ -483,16 +483,14 @@ export default function QuickRepliesPanel({
             filteredReplies.map((reply, index) => (
               <div
                 key={reply.id}
+                onClick={() => handleSelect(reply)}
                 className={`
-                  px-3 py-2 border-b border-gray-50 last:border-0 group
+                  px-3 py-2 border-b border-gray-50 last:border-0 group cursor-pointer
                   ${index === selectedIndex ? 'bg-green-50' : 'hover:bg-gray-50'}
                 `}
               >
                 <div className="flex items-center justify-between">
-                  <div 
-                    className="flex items-center gap-2 flex-1 cursor-pointer"
-                    onClick={() => handleSelect(reply)}
-                  >
+                  <div className="flex items-center gap-2 flex-1 min-w-0">
                     {reply.message_type === 'flex' ? (
                       <FiCode className="w-4 h-4 text-purple-500 flex-shrink-0" />
                     ) : (
@@ -504,7 +502,10 @@ export default function QuickRepliesPanel({
                     )}
                   </div>
                   {/* Edit & Delete Buttons */}
-                  <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div 
+                    className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <button
                       type="button"
                       onClick={(e) => handleEdit(reply, e)}
@@ -523,10 +524,7 @@ export default function QuickRepliesPanel({
                     </button>
                   </div>
                 </div>
-                <p 
-                  className="text-xs text-gray-500 truncate mt-0.5 ml-6 cursor-pointer"
-                  onClick={() => handleSelect(reply)}
-                >
+                <p className="text-xs text-gray-500 truncate mt-0.5 ml-6">
                   {reply.message_type === 'flex' ? '[Flex Message]' : reply.content}
                 </p>
               </div>

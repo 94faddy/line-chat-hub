@@ -4,6 +4,46 @@ import { User } from '@/models';
 import { createToken } from '@/lib/auth';
 import bcrypt from 'bcryptjs';
 
+// ดึง Cookie domain
+const getCookieDomain = (): string | undefined => {
+  if (process.env.COOKIE_DOMAIN) {
+    return process.env.COOKIE_DOMAIN;
+  }
+  
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+  if (appUrl) {
+    try {
+      const url = new URL(appUrl);
+      return url.hostname;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+};
+
+// แปลง JWT_EXPIRES_IN เป็น seconds สำหรับ cookie maxAge
+const getMaxAgeSeconds = (): number => {
+  const expiresIn = process.env.JWT_EXPIRES_IN || '7d';
+  
+  // Parse format: 1d, 7d, 24h, 60m, 3600s
+  const match = expiresIn.match(/^(\d+)([dhms])$/);
+  if (!match) {
+    return 7 * 24 * 60 * 60; // default 7 days
+  }
+  
+  const value = parseInt(match[1]);
+  const unit = match[2];
+  
+  switch (unit) {
+    case 'd': return value * 24 * 60 * 60; // days to seconds
+    case 'h': return value * 60 * 60;       // hours to seconds
+    case 'm': return value * 60;            // minutes to seconds
+    case 's': return value;                 // already seconds
+    default: return 7 * 24 * 60 * 60;
+  }
+};
+
 export async function POST(request: NextRequest) {
   try {
     await connectDB();
@@ -15,19 +55,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'กรุณากรอกอีเมลและรหัสผ่าน' }, { status: 400 });
     }
 
-    // ค้นหา user
     const user = await User.findOne({ email: email.toLowerCase() });
     if (!user) {
       return NextResponse.json({ success: false, message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' }, { status: 401 });
     }
 
-    // ตรวจสอบรหัสผ่าน
     const isValid = await bcrypt.compare(password, user.password);
     if (!isValid) {
       return NextResponse.json({ success: false, message: 'อีเมลหรือรหัสผ่านไม่ถูกต้อง' }, { status: 401 });
     }
 
-    // ตรวจสอบสถานะ
     if (user.status === 'pending') {
       return NextResponse.json({ success: false, message: 'กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ' }, { status: 401 });
     }
@@ -36,10 +73,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'บัญชีของคุณถูกระงับ' }, { status: 401 });
     }
 
-    // อัพเดท last_login
     await User.findByIdAndUpdate(user._id, { last_login: new Date() });
 
-    // สร้าง token
     const token = createToken({
       userId: user._id.toString(),
       email: user.email,
@@ -47,7 +82,6 @@ export async function POST(request: NextRequest) {
       name: user.name
     });
 
-    // สร้าง response พร้อม cookie
     const response = NextResponse.json({
       success: true,
       message: 'เข้าสู่ระบบสำเร็จ',
@@ -60,12 +94,37 @@ export async function POST(request: NextRequest) {
       }
     });
 
-    response.cookies.set('auth_token', token, {
+    const cookieDomain = getCookieDomain();
+    const isProduction = process.env.NODE_ENV === 'production';
+    const maxAge = getMaxAgeSeconds();
+    
+    // Debug log
+    console.log('[Login] NODE_ENV:', process.env.NODE_ENV);
+    console.log('[Login] JWT_EXPIRES_IN:', process.env.JWT_EXPIRES_IN);
+    console.log('[Login] Cookie maxAge (seconds):', maxAge);
+    console.log('[Login] Cookie maxAge (days):', (maxAge / 86400).toFixed(2));
+    console.log('[Login] COOKIE_DOMAIN:', cookieDomain);
+    
+    const cookieOptions: {
+      httpOnly: boolean;
+      secure: boolean;
+      sameSite: 'lax' | 'strict' | 'none';
+      maxAge: number;
+      path: string;
+      domain?: string;
+    } = {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: isProduction,
       sameSite: 'lax',
-      maxAge: 7 * 24 * 60 * 60 // 7 days
-    });
+      maxAge: maxAge,
+      path: '/',
+    };
+    
+    if (cookieDomain) {
+      cookieOptions.domain = cookieDomain;
+    }
+    
+    response.cookies.set('auth_token', token, cookieOptions);
 
     return response;
   } catch (error) {

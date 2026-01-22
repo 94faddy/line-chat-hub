@@ -8,7 +8,15 @@ export async function GET(request: NextRequest) {
   try {
     await connectDB();
     
+    // Debug: Log all cookies
+    const allCookies = request.cookies.getAll();
+    console.log('[Me] All cookies received:', allCookies.map(c => c.name));
+    console.log('[Me] Request host:', request.headers.get('host'));
+    
     const token = request.cookies.get('auth_token')?.value;
+    
+    console.log('[Me] auth_token exists:', !!token);
+    
     if (!token) {
       return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
     }
