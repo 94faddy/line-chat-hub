@@ -282,19 +282,32 @@ async function getOrCreateLineUser(channelId: any, lineUserId: string, accessTok
       console.error('Get user profile error:', e);
     }
 
-    // สร้าง LINE User ใหม่
-    lineUser = new LineUser({
-      channel_id: channelId,
-      line_user_id: lineUserId,
-      display_name: profile.displayName || 'Unknown',
-      picture_url: profile.pictureUrl || null,
-      status_message: profile.statusMessage || null,
-      source_type: 'user',
-      last_message_at: new Date(),
-    });
+    // ✅ สร้าง LINE User ใหม่ - ใช้ try-catch ป้องกัน race condition
+    try {
+      lineUser = new LineUser({
+        channel_id: channelId,
+        line_user_id: lineUserId,
+        display_name: profile.displayName || 'Unknown',
+        picture_url: profile.pictureUrl || null,
+        status_message: profile.statusMessage || null,
+        source_type: 'user',
+        last_message_at: new Date(),
+      });
 
-    await lineUser.save();
-    console.log('✅ [Webhook] Created new LINE user:', lineUser.display_name);
+      await lineUser.save();
+      console.log('✅ [Webhook] Created new LINE user:', lineUser.display_name);
+    } catch (createError: any) {
+      // ✅ ถ้า duplicate key error → ลอง find อีกครั้ง (race condition)
+      if (createError.code === 11000) {
+        console.log('⚠️ [Webhook] Race condition detected, finding existing user...');
+        lineUser = await LineUser.findOne({
+          channel_id: channelId,
+          line_user_id: lineUserId
+        });
+      } else {
+        throw createError;
+      }
+    }
   } else {
     // ✅ อัพเดท source_type ถ้ายังไม่มี
     if (!lineUser.source_type) {
@@ -340,20 +353,31 @@ async function getOrCreateGroupOrRoom(
       }
     }
 
-    lineUser = new LineUser({
-      channel_id: channelId,
-      line_user_id: targetId, // ใช้ targetId เป็น line_user_id สำหรับ group/room
-      display_name: groupInfo.groupName || (sourceType === 'group' ? 'กลุ่มไลน์' : 'ห้องแชท'),
-      picture_url: groupInfo.pictureUrl || null,
-      source_type: sourceType,
-      group_id: sourceType === 'group' ? targetId : undefined,
-      room_id: sourceType === 'room' ? targetId : undefined,
-      member_count: memberCount,
-      last_message_at: new Date(),
-    });
+    // ✅ ใช้ try-catch ป้องกัน race condition
+    try {
+      lineUser = new LineUser({
+        channel_id: channelId,
+        line_user_id: targetId, // ใช้ targetId เป็น line_user_id สำหรับ group/room
+        display_name: groupInfo.groupName || (sourceType === 'group' ? 'กลุ่มไลน์' : 'ห้องแชท'),
+        picture_url: groupInfo.pictureUrl || null,
+        source_type: sourceType,
+        group_id: sourceType === 'group' ? targetId : undefined,
+        room_id: sourceType === 'room' ? targetId : undefined,
+        member_count: memberCount,
+        last_message_at: new Date(),
+      });
 
-    await lineUser.save();
-    console.log(`✅ [Webhook] Created new ${sourceType}:`, lineUser.display_name);
+      await lineUser.save();
+      console.log(`✅ [Webhook] Created new ${sourceType}:`, lineUser.display_name);
+    } catch (createError: any) {
+      // ✅ ถ้า duplicate key error → ลอง find อีกครั้ง (race condition)
+      if (createError.code === 11000) {
+        console.log(`⚠️ [Webhook] Race condition detected for ${sourceType}, finding existing...`);
+        lineUser = await LineUser.findOne(query);
+      } else {
+        throw createError;
+      }
+    }
   }
 
   return lineUser;

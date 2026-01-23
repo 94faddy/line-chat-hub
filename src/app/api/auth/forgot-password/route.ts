@@ -13,7 +13,7 @@ export async function POST(request: NextRequest) {
     const { email } = body;
 
     if (!email) {
-      return NextResponse.json({ error: 'Email is required' }, { status: 400 });
+      return NextResponse.json({ success: false, error: 'Email is required' }, { status: 400 });
     }
 
     // Find user by email
@@ -22,7 +22,8 @@ export async function POST(request: NextRequest) {
     // Always return success to prevent email enumeration
     if (!user) {
       return NextResponse.json({ 
-        message: 'If an account exists with this email, you will receive a password reset link' 
+        success: true,
+        message: 'หากอีเมลนี้มีอยู่ในระบบ คุณจะได้รับลิงก์รีเซ็ตรหัสผ่าน' 
       });
     }
 
@@ -39,7 +40,7 @@ export async function POST(request: NextRequest) {
 
     // Build reset URL
     const baseUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
-    const resetUrl = `${baseUrl}/reset-password?token=${resetToken}`;
+    const resetUrl = `${baseUrl}/auth/reset-password?token=${resetToken}`;
 
     // Send email
     try {
@@ -69,10 +70,11 @@ export async function POST(request: NextRequest) {
     }
 
     return NextResponse.json({ 
-      message: 'If an account exists with this email, you will receive a password reset link' 
+      success: true,
+      message: 'หากอีเมลนี้มีอยู่ในระบบ คุณจะได้รับลิงก์รีเซ็ตรหัสผ่าน' 
     });
   } catch (error) {
     console.error('Forgot password error:', error);
-    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Internal server error' }, { status: 500 });
   }
 }
