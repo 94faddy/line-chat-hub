@@ -1,21 +1,34 @@
+// src/app/dashboard/channels/[id]/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
-import { FiArrowLeft, FiCopy, FiCheck, FiSave, FiEye, FiEyeOff, FiExternalLink } from 'react-icons/fi';
+import { FiArrowLeft, FiCopy, FiCheck, FiSave, FiEye, FiEyeOff, FiExternalLink, FiRefreshCw } from 'react-icons/fi';
 import Swal from 'sweetalert2';
+
+interface ChannelPermissions {
+  can_reply?: boolean;
+  can_view_all?: boolean;
+  can_broadcast?: boolean;
+  can_manage_tags?: boolean;
+  can_manage_channel?: boolean;
+}
 
 export default function EditChannelPage() {
   const router = useRouter();
   const params = useParams();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
   const [showSecrets, setShowSecrets] = useState({
     channel_secret: false,
     channel_access_token: false
   });
+  const [isOwner, setIsOwner] = useState(false);
+  const [canEdit, setCanEdit] = useState(false);
+  const [permissions, setPermissions] = useState<ChannelPermissions | null>(null);
   
   const [channelData, setChannelData] = useState({
     channel_name: '',
@@ -30,8 +43,8 @@ export default function EditChannelPage() {
 
   const [formData, setFormData] = useState({
     channel_name: '',
-    channel_secret: '', // เว้นว่างถ้าไม่ต้องการเปลี่ยน
-    channel_access_token: '', // เว้นว่างถ้าไม่ต้องการเปลี่ยน
+    channel_secret: '',
+    channel_access_token: '',
     status: 'active'
   });
 
@@ -57,15 +70,18 @@ export default function EditChannelPage() {
         });
         setFormData({
           channel_name: data.data.channel_name || '',
-          channel_secret: '', // เว้นว่างเพื่อให้กรอกใหม่เมื่อต้องการเปลี่ยน
-          channel_access_token: '', // เว้นว่างเพื่อให้กรอกใหม่เมื่อต้องการเปลี่ยน
+          channel_secret: '',
+          channel_access_token: '',
           status: data.data.status || 'active'
         });
+        setIsOwner(data.data.isOwner || false);
+        setCanEdit(data.data.canEdit || false);
+        setPermissions(data.data.permissions || null);
       } else {
         Swal.fire({
           icon: 'error',
           title: 'ไม่พบ Channel',
-          text: 'Channel นี้ไม่มีอยู่ในระบบ',
+          text: data.message || 'Channel นี้ไม่มีอยู่ในระบบ หรือคุณไม่มีสิทธิ์เข้าถึง',
         }).then(() => router.push('/dashboard/channels'));
       }
     } catch (error) {
@@ -80,6 +96,54 @@ export default function EditChannelPage() {
     }
   };
 
+  const handleRefresh = async () => {
+    setRefreshing(true);
+
+    try {
+      const res = await fetch(`/api/channels/${params.id}/refresh`, {
+        method: 'POST',
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        // อัพเดท state ด้วยข้อมูลใหม่
+        setChannelData(prev => ({
+          ...prev,
+          basic_id: data.data.basic_id || prev.basic_id,
+          picture_url: data.data.picture_url || prev.picture_url,
+        }));
+
+        Swal.fire({
+          icon: 'success',
+          title: 'อัพเดทข้อมูลสำเร็จ',
+          html: `
+            <div class="text-left text-sm">
+              <p><strong>Basic ID:</strong> ${data.data.basic_id || '-'}</p>
+              <p><strong>Display Name:</strong> ${data.data.display_name || '-'}</p>
+            </div>
+          `,
+          timer: 3000,
+          showConfirmButton: true,
+        });
+      } else {
+        Swal.fire({
+          icon: 'error',
+          title: 'เกิดข้อผิดพลาด',
+          text: data.message,
+        });
+      }
+    } catch (error) {
+      Swal.fire({
+        icon: 'error',
+        title: 'เกิดข้อผิดพลาด',
+        text: 'ไม่สามารถดึงข้อมูลจาก LINE API ได้',
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -90,7 +154,6 @@ export default function EditChannelPage() {
         status: formData.status
       };
 
-      // เพิ่ม secret และ token เฉพาะเมื่อมีการกรอกใหม่
       if (formData.channel_secret) {
         updateData.channel_secret = formData.channel_secret;
       }
@@ -152,7 +215,6 @@ export default function EditChannelPage() {
     return token.substring(0, showChars) + '••••••••' + token.substring(token.length - showChars);
   };
 
-  // สร้าง Webhook URL ใหม่ทุกครั้งจาก ENV - ใช้ NEXT_PUBLIC_APIWEBHOOK
   const getWebhookUrl = () => {
     const baseUrl = process.env.NEXT_PUBLIC_APIWEBHOOK || process.env.NEXT_PUBLIC_APP_URL || 'https://bevchat.pro';
     return `${baseUrl}/api/webhook/${channelData.channel_id}`;
@@ -186,16 +248,38 @@ export default function EditChannelPage() {
               <span className="text-2xl">📱</span>
             </div>
           )}
-          <div>
+          <div className="flex-1">
             <h1 className="text-2xl font-bold text-gray-900">{channelData.channel_name}</h1>
-            <p className="text-gray-500">ตั้งค่า LINE Official Account</p>
+            <div className="flex items-center gap-2">
+              <p className="text-gray-500">ตั้งค่า LINE Official Account</p>
+              {!isOwner && (
+                <span className="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">Admin</span>
+              )}
+            </div>
           </div>
+          {/* Refresh Button */}
+          <button
+            onClick={handleRefresh}
+            disabled={refreshing}
+            className="btn btn-secondary flex items-center gap-2"
+            title="ดึงข้อมูลใหม่จาก LINE"
+          >
+            <FiRefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'กำลังโหลด...' : 'Refresh'}
+          </button>
         </div>
       </div>
 
       {/* Channel Info Card */}
       <div className="card p-6 mb-6">
-        <h2 className="text-lg font-semibold text-gray-900 mb-4">ข้อมูล Channel</h2>
+        <div className="flex items-center justify-between mb-4">
+          <h2 className="text-lg font-semibold text-gray-900">ข้อมูล Channel</h2>
+          {(!channelData.basic_id || !channelData.picture_url) && (
+            <span className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded-full">
+              ⚠️ ข้อมูลไม่ครบ - กด Refresh เพื่อดึงข้อมูลจาก LINE
+            </span>
+          )}
+        </div>
         
         <div className="space-y-4">
           {/* Channel ID */}
@@ -221,18 +305,18 @@ export default function EditChannelPage() {
           </div>
 
           {/* Basic ID */}
-          {channelData.basic_id && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Basic ID (LINE ID)
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  value={channelData.basic_id}
-                  className="input flex-1 bg-gray-50"
-                  readOnly
-                />
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              Basic ID (LINE ID)
+            </label>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={channelData.basic_id || '(ยังไม่มีข้อมูล - กด Refresh)'}
+                className={`input flex-1 bg-gray-50 ${!channelData.basic_id ? 'text-gray-400 italic' : ''}`}
+                readOnly
+              />
+              {channelData.basic_id && (
                 <button
                   type="button"
                   onClick={() => copyToClipboard(channelData.basic_id, 'Basic ID')}
@@ -240,9 +324,9 @@ export default function EditChannelPage() {
                 >
                   {copied === 'Basic ID' ? <FiCheck className="w-4 h-4 text-green-500" /> : <FiCopy className="w-4 h-4" />}
                 </button>
-              </div>
+              )}
             </div>
-          )}
+          </div>
 
           {/* Channel Access Token */}
           <div>

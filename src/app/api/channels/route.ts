@@ -1,3 +1,4 @@
+// src/app/api/channels/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { LineChannel, AdminPermission } from '@/models';
@@ -78,7 +79,8 @@ export async function GET(request: NextRequest) {
           can_reply: true,
           can_view_all: true,
           can_broadcast: true,
-          can_manage_tags: true
+          can_manage_tags: true,
+          can_manage_channel: true
         }
       });
     });
@@ -94,7 +96,8 @@ export async function GET(request: NextRequest) {
             can_reply: perms.can_reply ?? true,
             can_view_all: perms.can_view_all ?? false,
             can_broadcast: perms.can_broadcast ?? false,
-            can_manage_tags: perms.can_manage_tags ?? false
+            can_manage_tags: perms.can_manage_tags ?? false,
+            can_manage_channel: perms.can_manage_channel ?? false
           }
         });
       }
@@ -111,7 +114,8 @@ export async function GET(request: NextRequest) {
             can_reply: perms.can_reply ?? true,
             can_view_all: perms.can_view_all ?? false,
             can_broadcast: perms.can_broadcast ?? false,
-            can_manage_tags: perms.can_manage_tags ?? false
+            can_manage_tags: perms.can_manage_tags ?? false,
+            can_manage_channel: perms.can_manage_channel ?? false
           }
         });
       }

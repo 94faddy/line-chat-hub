@@ -1,3 +1,4 @@
+// src/app/api/team/invite/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { AdminPermission, LineChannel } from '@/models';
@@ -22,11 +23,15 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { 
       channel_id,
-      can_reply = true,
-      can_view_all = false,
-      can_broadcast = false,
-      can_manage_tags = false,
+      permissions
     } = body;
+
+    // รองรับทั้งแบบส่ง permissions มาเป็น object หรือแบบแยกแต่ละตัว
+    const can_reply = permissions?.can_reply ?? body.can_reply ?? true;
+    const can_view_all = permissions?.can_view_all ?? body.can_view_all ?? false;
+    const can_broadcast = permissions?.can_broadcast ?? body.can_broadcast ?? false;
+    const can_manage_tags = permissions?.can_manage_tags ?? body.can_manage_tags ?? false;
+    const can_manage_channel = permissions?.can_manage_channel ?? body.can_manage_channel ?? false;
 
     // ถ้าระบุ channel_id ให้ตรวจสอบว่าเป็นเจ้าของหรือไม่
     if (channel_id) {
@@ -53,6 +58,7 @@ export async function POST(request: NextRequest) {
         can_view_all,
         can_broadcast,
         can_manage_tags,
+        can_manage_channel,
       },
       status: 'pending',
       invite_token: inviteToken,

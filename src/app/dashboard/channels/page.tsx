@@ -1,3 +1,4 @@
+// src/app/dashboard/channels/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -16,6 +17,14 @@ interface Channel {
   created_at: string;
   message_count?: number;
   user_count?: number;
+  isOwner?: boolean;
+  permissions?: {
+    can_reply?: boolean;
+    can_view_all?: boolean;
+    can_broadcast?: boolean;
+    can_manage_tags?: boolean;
+    can_manage_channel?: boolean;
+  };
 }
 
 export default function ChannelsPage() {
@@ -40,7 +49,11 @@ export default function ChannelsPage() {
       const res = await fetch('/api/channels');
       const data = await res.json();
       if (data.success) {
-        setChannels(data.data);
+        // Filter เฉพาะ channels ที่มีสิทธิ์ can_manage_channel หรือเป็น owner
+        const filteredChannels = data.data.filter((ch: Channel) => 
+          ch.isOwner || ch.permissions?.can_manage_channel
+        );
+        setChannels(filteredChannels);
       }
     } catch (error) {
       console.error('Error:', error);
@@ -95,6 +108,16 @@ export default function ChannelsPage() {
   };
 
   const handleDelete = async (channel: Channel) => {
+    // ตรวจสอบว่าเป็น owner หรือไม่
+    if (!channel.isOwner) {
+      Swal.fire({
+        icon: 'error',
+        title: 'ไม่สามารถลบได้',
+        text: 'เฉพาะเจ้าของ Channel เท่านั้นที่สามารถลบได้',
+      });
+      return;
+    }
+
     const result = await Swal.fire({
       title: 'ยืนยันการลบ Channel?',
       html: `
@@ -264,6 +287,9 @@ export default function ChannelsPage() {
                     ) : (
                       <span className="badge badge-gray ml-2">Inactive</span>
                     )}
+                    {!channel.isOwner && (
+                      <span className="badge badge-blue ml-2">Admin</span>
+                    )}
                   </div>
 
                   {/* Stats */}
@@ -297,13 +323,15 @@ export default function ChannelsPage() {
                   >
                     <FiSettings className="w-5 h-5" />
                   </button>
-                  <button
-                    onClick={() => handleDelete(channel)}
-                    className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                    title="ลบ"
-                  >
-                    <FiTrash2 className="w-5 h-5" />
-                  </button>
+                  {channel.isOwner && (
+                    <button
+                      onClick={() => handleDelete(channel)}
+                      className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                      title="ลบ"
+                    >
+                      <FiTrash2 className="w-5 h-5" />
+                    </button>
+                  )}
                 </div>
               </div>
             </div>

@@ -55,7 +55,8 @@ body {
 }
 
 .chat-bubble-outgoing {
-  @apply bg-line-green text-white rounded-br-sm;
+  @apply text-gray-800 rounded-br-sm;
+  background-color: rgb(6 199 85 / 21%);
 }
 
 /* Animation */

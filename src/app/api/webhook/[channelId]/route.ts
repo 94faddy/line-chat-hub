@@ -224,6 +224,7 @@ async function handleEvent(event: any, channel: any) {
       // ส่ง realtime notification สำหรับข้อความใหม่
       await notifyNewMessage(channel._id.toString(), conversation._id.toString(), {
         id: savedMessage._id,
+        message_id: savedMessage.message_id, // ✅ เพิ่ม LINE message ID
         direction,
         message_type: message.type,
         content: savedMessage.content,

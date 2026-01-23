@@ -1,3 +1,4 @@
+// src/app/api/channels/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { LineChannel, AdminPermission } from '@/models';
@@ -6,6 +7,30 @@ import mongoose from 'mongoose';
 
 interface RouteParams {
   params: Promise<{ id: string }>;
+}
+
+// Helper function ตรวจสอบสิทธิ์ can_manage_channel
+async function checkManagePermission(userId: mongoose.Types.ObjectId, channel: any) {
+  const isOwner = channel.user_id.equals(userId);
+  
+  if (isOwner) {
+    return { hasPermission: true, isOwner: true, permissions: null };
+  }
+
+  const adminPerm = await AdminPermission.findOne({
+    admin_id: userId,
+    status: 'active',
+    $or: [
+      { channel_id: channel._id },
+      { channel_id: null, owner_id: channel.user_id }
+    ]
+  });
+
+  if (adminPerm && adminPerm.permissions?.can_manage_channel === true) {
+    return { hasPermission: true, isOwner: false, permissions: adminPerm.permissions };
+  }
+
+  return { hasPermission: false, isOwner: false, permissions: null };
 }
 
 // GET - ดึงข้อมูล Channel
@@ -31,21 +56,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'ไม่พบ Channel' }, { status: 404 });
     }
 
-    // ตรวจสอบสิทธิ์
-    const isOwner = channel.user_id.equals(userId);
-    let hasPermission = isOwner;
-
-    if (!isOwner) {
-      const adminPerm = await AdminPermission.findOne({
-        admin_id: userId,
-        status: 'active',
-        $or: [
-          { channel_id: channel._id },
-          { channel_id: null, owner_id: channel.user_id }
-        ]
-      });
-      hasPermission = !!adminPerm;
-    }
+    const { hasPermission, isOwner, permissions } = await checkManagePermission(userId, channel);
 
     if (!hasPermission) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึง Channel นี้' }, { status: 403 });
@@ -64,6 +75,14 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         picture_url: channel.picture_url,
         status: channel.status,
         isOwner,
+        canEdit: true, // ถ้าเข้ามาถึงตรงนี้ได้ แปลว่ามีสิทธิ์แก้ไข
+        permissions: isOwner ? {
+          can_reply: true,
+          can_view_all: true,
+          can_broadcast: true,
+          can_manage_tags: true,
+          can_manage_channel: true
+        } : permissions,
         created_at: channel.created_at
       }
     });
@@ -99,9 +118,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'ไม่พบ Channel' }, { status: 404 });
     }
 
-    // ตรวจสอบว่าเป็น owner เท่านั้น
-    if (!channel.user_id.equals(userId)) {
-      return NextResponse.json({ success: false, message: 'เฉพาะเจ้าของเท่านั้นที่สามารถแก้ไขได้' }, { status: 403 });
+    // ตรวจสอบสิทธิ์ - owner หรือ admin ที่มี can_manage_channel
+    const { hasPermission } = await checkManagePermission(userId, channel);
+
+    if (!hasPermission) {
+      return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์แก้ไข Channel นี้' }, { status: 403 });
     }
 
     // อัพเดท
@@ -120,7 +141,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// DELETE - ลบ Channel
+// DELETE - ลบ Channel (เฉพาะ owner เท่านั้น)
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
@@ -143,7 +164,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'ไม่พบ Channel' }, { status: 404 });
     }
 
-    // ตรวจสอบว่าเป็น owner เท่านั้น
+    // ตรวจสอบว่าเป็น owner เท่านั้น (ลบได้เฉพาะ owner)
     if (!channel.user_id.equals(userId)) {
       return NextResponse.json({ success: false, message: 'เฉพาะเจ้าของเท่านั้นที่สามารถลบได้' }, { status: 403 });
     }

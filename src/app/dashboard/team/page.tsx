@@ -1,3 +1,4 @@
+// src/app/dashboard/team/page.tsx
 'use client';
 
 import { useEffect, useState } from 'react';
@@ -35,7 +36,8 @@ export default function TeamPage() {
     permissions: {
       can_reply: true,
       can_view_all: false,
-      can_broadcast: false
+      can_broadcast: false,
+      can_manage_channel: false
     }
   });
   const [editForm, setEditForm] = useState({
@@ -43,7 +45,8 @@ export default function TeamPage() {
     permissions: {
       can_reply: true,
       can_view_all: false,
-      can_broadcast: false
+      can_broadcast: false,
+      can_manage_channel: false
     }
   });
   const [inviting, setInviting] = useState(false);
@@ -148,7 +151,8 @@ export default function TeamPage() {
       permissions: {
         can_reply: true,
         can_view_all: false,
-        can_broadcast: false
+        can_broadcast: false,
+        can_manage_channel: false
       }
     });
     setInviteLink(null);
@@ -161,7 +165,8 @@ export default function TeamPage() {
       permissions: {
         can_reply: member.permissions?.can_reply ?? true,
         can_view_all: member.permissions?.can_view_all ?? false,
-        can_broadcast: member.permissions?.can_broadcast ?? false
+        can_broadcast: member.permissions?.can_broadcast ?? false,
+        can_manage_channel: member.permissions?.can_manage_channel ?? false
       }
     });
     setShowEditModal(true);
@@ -245,33 +250,6 @@ export default function TeamPage() {
     }
   };
 
-  const PermissionCheckbox = ({ 
-    label, 
-    checked, 
-    onChange, 
-    description 
-  }: { 
-    label: string; 
-    checked: boolean; 
-    onChange: (checked: boolean) => void;
-    description?: string;
-  }) => (
-    <label className="flex items-start gap-3 p-3 bg-white border border-gray-200 rounded-lg hover:border-green-300 cursor-pointer transition-colors">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="mt-0.5 rounded text-line-green focus:ring-line-green"
-      />
-      <div>
-        <span className="text-sm font-medium text-gray-700">{label}</span>
-        {description && (
-          <p className="text-xs text-gray-500 mt-0.5">{description}</p>
-        )}
-      </div>
-    </label>
-  );
-
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -286,7 +264,7 @@ export default function TeamPage() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">จัดการทีม</h1>
-          <p className="text-gray-500">เพิ่มสมาชิกเพื่อช่วยตอบแชท</p>
+          <p className="text-gray-500">เชิญสมาชิกและกำหนดสิทธิ์การเข้าถึง</p>
         </div>
         <button
           onClick={() => {
@@ -296,109 +274,115 @@ export default function TeamPage() {
           className="btn btn-primary"
         >
           <FiPlus className="w-5 h-5 mr-2" />
-          เชิญสมาชิก
+          สร้างลิงก์เชิญ
         </button>
       </div>
 
-      {/* Members List */}
+      {/* Team Members */}
       {members.length === 0 ? (
         <div className="card p-12 text-center">
-          <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-            <FiUser className="w-10 h-10 text-gray-400" />
+          <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+            <FiUser className="w-10 h-10 text-green-500" />
           </div>
           <h3 className="text-lg font-semibold text-gray-900 mb-2">ยังไม่มีสมาชิกในทีม</h3>
-          <p className="text-gray-500 mb-6">เชิญสมาชิกเพื่อช่วยตอบแชทจากลูกค้า</p>
+          <p className="text-gray-500 mb-6">สร้างลิงก์เชิญเพื่อเพิ่มสมาชิกใหม่</p>
           <button
             onClick={() => {
               resetInviteForm();
               setShowInviteModal(true);
             }}
-            className="btn btn-primary inline-flex"
+            className="btn btn-primary"
           >
-            <FiPlus className="w-5 h-5 mr-2" />
-            เชิญสมาชิกคนแรก
+            <FiLink className="w-5 h-5 mr-2" />
+            สร้างลิงก์เชิญ
           </button>
         </div>
       ) : (
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-          <table className="w-full">
+        <div className="card overflow-hidden">
+          <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">สมาชิก</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Channel</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">สิทธิ์</th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">สถานะ</th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">จัดการ</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  สมาชิก
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Channel
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  สิทธิ์
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  สถานะ
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  จัดการ
+                </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-gray-200">
-              {members.map(member => (
+            <tbody className="bg-white divide-y divide-gray-200">
+              {members.map((member) => (
                 <tr key={member.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-3">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <div className="flex items-center">
                       <div className="w-10 h-10 bg-gray-200 rounded-full flex items-center justify-center">
                         <FiUser className="w-5 h-5 text-gray-500" />
                       </div>
-                      <div>
-                        <p className="font-medium text-gray-900">
+                      <div className="ml-4">
+                        <div className="text-sm font-medium text-gray-900">
                           {member.admin_name || 'รอยืนยัน'}
-                        </p>
-                        <p className="text-sm text-gray-500">
-                          {member.admin_email || '-'}
-                        </p>
+                        </div>
+                        <div className="text-sm text-gray-500">
+                          {member.admin_email}
+                        </div>
                       </div>
                     </div>
                   </td>
-                  <td className="px-6 py-4">
-                    <span className="tag bg-green-100 text-green-700">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className="text-sm text-gray-900">
                       {member.channel_name || 'ทุก Channel'}
                     </span>
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex flex-wrap gap-1">
                       {member.permissions?.can_reply && (
-                        <span className="tag bg-blue-100 text-blue-700">ตอบแชท</span>
+                        <span className="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800">ตอบแชท</span>
                       )}
                       {member.permissions?.can_view_all && (
-                        <span className="tag bg-purple-100 text-purple-700">ดูทั้งหมด</span>
+                        <span className="px-2 py-1 text-xs rounded-full bg-purple-100 text-purple-800">ดูทั้งหมด</span>
                       )}
                       {member.permissions?.can_broadcast && (
-                        <span className="tag bg-orange-100 text-orange-700">Broadcast</span>
+                        <span className="px-2 py-1 text-xs rounded-full bg-green-100 text-green-800">Broadcast</span>
+                      )}
+                      {member.permissions?.can_manage_channel && (
+                        <span className="px-2 py-1 text-xs rounded-full bg-orange-100 text-orange-800">ตั้งค่า Channel</span>
                       )}
                     </div>
                   </td>
-                  <td className="px-6 py-4">
+                  <td className="px-6 py-4 whitespace-nowrap">
                     {member.status === 'active' ? (
-                      <span className="badge badge-green">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
                         <FiCheck className="w-3 h-3 mr-1" />
-                        ใช้งาน
+                        Active
                       </span>
-                    ) : member.status === 'pending' ? (
-                      <span className="badge badge-yellow">
+                    ) : (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-yellow-100 text-yellow-800">
                         <FiClock className="w-3 h-3 mr-1" />
                         รอยืนยัน
                       </span>
-                    ) : (
-                      <span className="badge badge-gray">
-                        <FiX className="w-3 h-3 mr-1" />
-                        ยกเลิก
-                      </span>
                     )}
                   </td>
-                  <td className="px-6 py-4 text-right">
+                  <td className="px-6 py-4 whitespace-nowrap text-right">
                     <div className="flex items-center justify-end gap-2">
-                      {member.status === 'active' && (
-                        <button
-                          onClick={() => handleEdit(member)}
-                          className="p-2 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="แก้ไขสิทธิ์"
-                        >
-                          <FiEdit2 className="w-4 h-4" />
-                        </button>
-                      )}
+                      <button
+                        onClick={() => handleEdit(member)}
+                        className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="แก้ไขสิทธิ์"
+                      >
+                        <FiEdit2 className="w-4 h-4" />
+                      </button>
                       <button
                         onClick={() => handleRevoke(member)}
-                        className="p-2 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
                         title="ยกเลิกสิทธิ์"
                       >
                         <FiTrash2 className="w-4 h-4" />
@@ -497,6 +481,15 @@ export default function TeamPage() {
                     onChange={(checked) => setInviteForm({
                       ...inviteForm,
                       permissions: { ...inviteForm.permissions, can_broadcast: checked }
+                    })}
+                  />
+                  <PermissionCheckbox
+                    label="ตั้งค่า Channel"
+                    description="สามารถเข้าถึงหน้าจัดการและตั้งค่า LINE Channel ได้"
+                    checked={inviteForm.permissions.can_manage_channel}
+                    onChange={(checked) => setInviteForm({
+                      ...inviteForm,
+                      permissions: { ...inviteForm.permissions, can_manage_channel: checked }
                     })}
                   />
                 </div>
@@ -601,6 +594,15 @@ export default function TeamPage() {
                       permissions: { ...editForm.permissions, can_broadcast: checked }
                     })}
                   />
+                  <PermissionCheckbox
+                    label="ตั้งค่า Channel"
+                    description="สามารถเข้าถึงหน้าจัดการและตั้งค่า LINE Channel ได้"
+                    checked={editForm.permissions.can_manage_channel}
+                    onChange={(checked) => setEditForm({
+                      ...editForm,
+                      permissions: { ...editForm.permissions, can_manage_channel: checked }
+                    })}
+                  />
                 </div>
               </div>
 
@@ -638,5 +640,33 @@ export default function TeamPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// Permission Checkbox Component
+function PermissionCheckbox({ 
+  label, 
+  description, 
+  checked, 
+  onChange 
+}: { 
+  label: string; 
+  description: string; 
+  checked: boolean; 
+  onChange: (checked: boolean) => void;
+}) {
+  return (
+    <label className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors">
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 w-4 h-4 text-green-600 rounded border-gray-300 focus:ring-green-500"
+      />
+      <div>
+        <div className="text-sm font-medium text-gray-900">{label}</div>
+        <div className="text-xs text-gray-500">{description}</div>
+      </div>
+    </label>
   );
 }

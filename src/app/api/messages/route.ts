@@ -57,7 +57,7 @@ export async function GET(request: NextRequest) {
     }
 
     const messages = await Message.find({ conversation_id: conversationId })
-      .select('direction message_type content media_url sticker_id package_id flex_content source_type is_read sender_info sent_by created_at')
+      .select('message_id direction message_type content media_url sticker_id package_id flex_content source_type is_read sender_info sent_by created_at')
       .populate('sent_by', 'name email avatar') // ✅ Populate ข้อมูลคนส่ง
       .sort({ created_at: 1 })
       .lean();
@@ -65,6 +65,7 @@ export async function GET(request: NextRequest) {
     // แปลง _id เป็น id
     const formattedMessages = messages.map(msg => ({
       id: msg._id,
+      message_id: msg.message_id, // ✅ เพิ่ม LINE message ID สำหรับ duplicate check
       direction: msg.direction,
       message_type: msg.message_type,
       content: msg.content,

@@ -1,3 +1,4 @@
+// src/models/AdminPermission.ts
 import mongoose, { Schema, Document, Model, Types } from 'mongoose';
 
 export interface IAdminPermissions {
@@ -5,6 +6,7 @@ export interface IAdminPermissions {
   can_view_all?: boolean;
   can_broadcast?: boolean;
   can_manage_tags?: boolean;
+  can_manage_channel?: boolean;
 }
 
 export interface IAdminPermission extends Document {

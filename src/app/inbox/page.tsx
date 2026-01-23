@@ -85,6 +85,7 @@ interface Conversation {
 
 interface Message {
   id: string;
+  message_id?: string; // ✅ LINE message ID สำหรับ duplicate check
   direction: 'incoming' | 'outgoing';
   message_type: string;
   content?: string;
@@ -813,10 +814,40 @@ export default function InboxPage() {
         // เพิ่มข้อความใหม่ถ้าเป็น conversation ที่กำลังดูอยู่
         if (currentConv && event.data.conversation_id === currentConv.id) {
           setMessages(prev => {
-            if (prev.some(m => m.id === event.data.message.id)) {
+            const newMsg = event.data.message;
+            
+            // ✅ ตรวจสอบ duplicate หลายแบบ
+            const isDuplicate = prev.some(m => {
+              // 1. เช็ค id ตรงกัน
+              if (m.id === newMsg.id) return true;
+              
+              // 2. เช็ค LINE message_id ตรงกัน (ถ้ามี)
+              if (m.message_id && newMsg.message_id && m.message_id === newMsg.message_id) return true;
+              
+              // 3. เช็คข้อความ text เดียวกัน (ต้องมี content จริงๆ ไม่ใช่ null/undefined)
+              if (m.content && newMsg.content && 
+                  m.content === newMsg.content && 
+                  m.direction === newMsg.direction &&
+                  m.message_type === newMsg.message_type &&
+                  Math.abs(new Date(m.created_at).getTime() - new Date(newMsg.created_at).getTime()) < 2000) {
+                return true;
+              }
+              
+              return false;
+            });
+            
+            if (isDuplicate) {
+              console.log('⏭️ Skipping duplicate message:', newMsg.id);
               return prev;
             }
-            return [...prev, event.data.message];
+            
+            // ✅ เพิ่มข้อความและ sort ตาม created_at
+            const updated = [...prev, newMsg].sort((a, b) => 
+              new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+            );
+            
+            console.log('📝 Message added and sorted. Total:', updated.length);
+            return updated;
           });
           
           // ✅ ถ้าเป็นข้อความขาเข้า
@@ -2751,7 +2782,7 @@ export default function InboxPage() {
                         {msg.content && <p className="text-sm mt-1">{msg.content}</p>}
                       </div>
                     )}
-                    <div className={`text-xs mt-1 ${msg.direction === 'outgoing' ? 'text-green-100' : 'text-gray-400'}`}>
+                    <div className={`text-xs mt-1 ${msg.direction === 'outgoing' ? 'text-gray-500' : 'text-gray-400'}`}>
                       {formatMessageTime(msg.created_at)}
                     </div>
                   </div>

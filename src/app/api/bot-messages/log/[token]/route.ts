@@ -145,18 +145,31 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     if (!lineUser) {
       if (isGroupMessage) {
-        // ✅ สร้าง entry สำหรับ group/room
+        // ✅ สร้าง entry สำหรับ group/room - ใช้ try-catch ป้องกัน race condition
         const sourceType = group_id ? 'group' : 'room';
-        lineUser = await LineUser.create({
-          line_user_id: targetId,
-          channel_id: channel._id,
-          display_name: `${sourceType === 'group' ? 'กลุ่ม' : 'ห้อง'} ${targetId.substring(0, 8)}...`,
-          source_type: sourceType,
-          group_id: group_id || undefined,
-          room_id: room_id || undefined,
-          follow_status: 'following'
-        });
-        console.log('👥 [Bot Log] Created new group/room entry:', lineUser._id);
+        try {
+          lineUser = await LineUser.create({
+            line_user_id: targetId,
+            channel_id: channel._id,
+            display_name: `${sourceType === 'group' ? 'กลุ่ม' : 'ห้อง'} ${targetId.substring(0, 8)}...`,
+            source_type: sourceType,
+            group_id: group_id || undefined,
+            room_id: room_id || undefined,
+            follow_status: 'following'
+          });
+          console.log('👥 [Bot Log] Created new group/room entry:', lineUser._id);
+        } catch (createError: any) {
+          // ✅ ถ้า duplicate key error → ลอง find อีกครั้ง (race condition)
+          if (createError.code === 11000) {
+            console.log('⚠️ [Bot Log] Race condition detected, finding existing user...');
+            lineUser = await LineUser.findOne({ 
+              line_user_id: targetId,
+              channel_id: channel._id
+            });
+          } else {
+            throw createError;
+          }
+        }
       } else {
         // ⭐ ต้องดึง profile จาก LINE API ก่อนสร้าง user ใหม่
         let profile: any = null;
@@ -181,17 +194,30 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
           }
         }
 
-        // ✅ สร้าง user ได้แม้ดึง profile ไม่ได้ (สำหรับ Liff share)
-        lineUser = await LineUser.create({
-          line_user_id: line_user_id,
-          channel_id: channel._id,
-          display_name: displayName,
-          picture_url: pictureUrl,
-          status_message: profile?.statusMessage || null,
-          source_type: 'user',
-          follow_status: followStatus
-        });
-        console.log('👤 [Bot Log] Created new LINE user:', lineUser._id, displayName);
+        // ✅ สร้าง user - ใช้ try-catch ป้องกัน race condition
+        try {
+          lineUser = await LineUser.create({
+            line_user_id: line_user_id,
+            channel_id: channel._id,
+            display_name: displayName,
+            picture_url: pictureUrl,
+            status_message: profile?.statusMessage || null,
+            source_type: 'user',
+            follow_status: followStatus
+          });
+          console.log('👤 [Bot Log] Created new LINE user:', lineUser._id, displayName);
+        } catch (createError: any) {
+          // ✅ ถ้า duplicate key error → ลอง find อีกครั้ง (race condition)
+          if (createError.code === 11000) {
+            console.log('⚠️ [Bot Log] Race condition detected, finding existing user...');
+            lineUser = await LineUser.findOne({ 
+              line_user_id: line_user_id,
+              channel_id: channel._id
+            });
+          } else {
+            throw createError;
+          }
+        }
       }
     } else {
       // ⭐ ถ้า user มีอยู่แล้ว และไม่ใช่กลุ่ม ตรวจสอบ follow_status
