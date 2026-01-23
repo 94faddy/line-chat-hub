@@ -1,6 +1,7 @@
+// src/app/api/broadcast/send/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
-import { Broadcast, LineUser, LineChannel, AdminPermission } from '@/models';
+import { Broadcast, LineUser, LineChannel, AdminPermission, BroadcastRecipient } from '@/models';
 import { verifyToken } from '@/lib/auth';
 import { broadcastMessage, multicastMessage } from '@/lib/line';
 import mongoose from 'mongoose';
@@ -13,6 +14,14 @@ interface MessageInput {
   type: 'text' | 'image' | 'flex';
   content: string;
   altText?: string;
+}
+
+// Interface สำหรับ user ที่จะส่ง
+interface UserToSend {
+  _id: mongoose.Types.ObjectId;
+  line_user_id: string;
+  display_name?: string;
+  picture_url?: string;
 }
 
 // แปลง Flex JSON จาก LINE Simulator format เป็น LINE API format
@@ -100,11 +109,12 @@ export async function POST(request: NextRequest) {
     }
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
+    const channelObjectId = new mongoose.Types.ObjectId(channel_id);
 
     // ✅ ตรวจสอบสิทธิ์เข้าถึง channel (เฉพาะ active)
     const channel = await LineChannel.findOne({
-      _id: channel_id,
-      status: 'active' // ✅ เพิ่ม filter
+      _id: channelObjectId,
+      status: 'active'
     });
     if (!channel) {
       return NextResponse.json({ success: false, message: 'ไม่พบ Channel หรือ Channel ถูกปิดใช้งานแล้ว' }, { status: 404 });
@@ -176,96 +186,9 @@ export async function POST(request: NextRequest) {
     let sentCount = 0;
     let failedCount = 0;
     let targetCount = 0;
-
-    if (broadcast_type === 'official') {
-      // ==========================================
-      // แบบที่ 1: Broadcast ปกติ (ใช้โควต้า LINE OA)
-      // ==========================================
-      try {
-        // LINE broadcast API รองรับหลาย messages ใน 1 request
-        await broadcastMessage(channel.channel_access_token, lineMessages);
-        
-        // นับ followers (ประมาณ)
-        targetCount = await LineUser.countDocuments({
-          channel_id: new mongoose.Types.ObjectId(channel_id),
-          source_type: 'user',
-          follow_status: { $nin: ['unfollowed', 'blocked'] }
-        });
-        sentCount = targetCount;
-        
-      } catch (error: any) {
-        console.error('Official broadcast error:', error);
-        failedCount = 1;
-        
-        return NextResponse.json({ 
-          success: false, 
-          message: error.message || 'ส่ง Broadcast ไม่สำเร็จ' 
-        }, { status: 500 });
-      }
-      
-    } else {
-      // ==========================================
-      // แบบที่ 2: Push Broadcast (ส่งทีละ batch - ฟรี!)
-      // ==========================================
-      
-      // ดึง user IDs ทั้งหมดที่สามารถส่งได้
-      // เรียงตาม created_at (เก่าสุดก่อน)
-      let query = LineUser.find({
-        channel_id: new mongoose.Types.ObjectId(channel_id),
-        source_type: 'user',
-        follow_status: { $nin: ['unfollowed', 'blocked'] }
-      })
-        .select('line_user_id')
-        .sort({ created_at: 1 }); // เรียงจากเก่าสุด (ทักมาก่อน)
-      
-      // ถ้ามี limit ให้จำกัดจำนวน
-      if (limit > 0) {
-        query = query.limit(limit);
-      }
-      
-      const users = await query.lean();
-      const userIds = users.map(u => u.line_user_id);
-      targetCount = userIds.length;
-
-      if (targetCount === 0) {
-        return NextResponse.json({ 
-          success: false, 
-          message: 'ไม่มีผู้ใช้ที่สามารถส่งข้อความได้' 
-        }, { status: 400 });
-      }
-
-      // แบ่งเป็น batch ละ 500 คน (LINE API limit)
-      const BATCH_SIZE = 500;
-      const batches: string[][] = [];
-      
-      for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
-        batches.push(userIds.slice(i, i + BATCH_SIZE));
-      }
-
-      console.log(`📤 [Push Broadcast] Starting: ${targetCount} users in ${batches.length} batches, ${lineMessages.length} messages`);
-
-      // ส่งทีละ batch
-      for (let i = 0; i < batches.length; i++) {
-        const batch = batches[i];
-        
-        try {
-          // LINE multicast API รองรับหลาย messages ใน 1 request
-          await multicastMessage(channel.channel_access_token, batch, lineMessages);
-          sentCount += batch.length;
-          console.log(`✅ [Push Broadcast] Batch ${i + 1}/${batches.length}: ${batch.length} users sent`);
-        } catch (error: any) {
-          console.error(`❌ [Push Broadcast] Batch ${i + 1} failed:`, error.message);
-          failedCount += batch.length;
-        }
-
-        // Delay ระหว่าง batch (ป้องกัน rate limit)
-        if (i < batches.length - 1) {
-          await delay(delay_ms);
-        }
-      }
-
-      console.log(`📤 [Push Broadcast] Completed: ${sentCount} sent, ${failedCount} failed`);
-    }
+    
+    // ✅ เก็บข้อมูลผู้รับสำหรับบันทึก
+    const recipientsToSave: any[] = [];
 
     // กำหนด message_type สำหรับ record
     let recordMessageType = 'text';
@@ -297,28 +220,201 @@ export async function POST(request: NextRequest) {
       contentSummary = `[${lineMessages.length} ข้อความ: ${types.join(', ')}]`;
     }
 
-    // บันทึก Broadcast record
+    // ✅ สร้าง Broadcast record ก่อน (เพื่อเอา _id ไปใช้)
     const newBroadcast = new Broadcast({
-      channel_id: new mongoose.Types.ObjectId(channel_id),
+      channel_id: channelObjectId,
       broadcast_type: broadcast_type,
       message_type: recordMessageType,
       content: contentSummary,
       target_type: 'all',
-      target_count: targetCount,
-      sent_count: sentCount,
-      failed_count: failedCount,
-      status: failedCount === 0 ? 'completed' : (sentCount > 0 ? 'completed' : 'failed'),
+      target_count: 0, // จะอัพเดทภายหลัง
+      sent_count: 0,
+      failed_count: 0,
+      status: 'sending',
       sent_at: new Date(),
       created_by: userId
     });
-
     await newBroadcast.save();
+
+    const broadcastId = newBroadcast._id;
+
+    if (broadcast_type === 'official') {
+      // ==========================================
+      // แบบที่ 1: Broadcast ปกติ (ใช้โควต้า LINE OA)
+      // ==========================================
+      try {
+        await broadcastMessage(channel.channel_access_token, lineMessages);
+        
+        // ✅ ดึง users ทั้งหมดพร้อมข้อมูลโปรไฟล์
+        // ✅ Filter เฉพาะ LINE User ID ที่ถูกต้อง
+        const users = await LineUser.find({
+          channel_id: channelObjectId,
+          source_type: 'user',
+          follow_status: { $nin: ['unfollowed', 'blocked'] },
+          line_user_id: { $regex: /^U[a-f0-9]{32}$/i } // ✅ เฉพาะ LINE User ID ที่ถูกต้อง
+        }).select('_id line_user_id display_name picture_url').lean() as UserToSend[];
+        
+        targetCount = users.length;
+        sentCount = targetCount;
+        
+        // ✅ บันทึกผู้รับทั้งหมด (Official broadcast ถือว่าส่งสำเร็จทุกคน)
+        const sentAt = new Date();
+        for (const user of users) {
+          recipientsToSave.push({
+            broadcast_id: broadcastId,
+            channel_id: channelObjectId,
+            line_user_id: user.line_user_id,
+            user_id: user._id,
+            display_name: user.display_name || null,
+            picture_url: user.picture_url || null,
+            status: 'sent',
+            sent_at: sentAt
+          });
+        }
+        
+      } catch (error: any) {
+        console.error('Official broadcast error:', error);
+        
+        // อัพเดท broadcast status เป็น failed
+        await Broadcast.findByIdAndUpdate(broadcastId, {
+          status: 'failed',
+          failed_count: 1
+        });
+        
+        return NextResponse.json({ 
+          success: false, 
+          message: error.message || 'ส่ง Broadcast ไม่สำเร็จ' 
+        }, { status: 500 });
+      }
+      
+    } else {
+      // ==========================================
+      // แบบที่ 2: Push Broadcast (ส่งทีละ batch - ฟรี!)
+      // ==========================================
+      
+      // ✅ ดึง users ทั้งหมดพร้อมข้อมูลโปรไฟล์
+      // ✅ Filter เฉพาะ LINE User ID ที่ถูกต้อง (ขึ้นต้นด้วย U + 32 hex chars)
+      let query = LineUser.find({
+        channel_id: channelObjectId,
+        source_type: 'user',
+        follow_status: { $nin: ['unfollowed', 'blocked'] },
+        line_user_id: { $regex: /^U[a-f0-9]{32}$/i } // ✅ เฉพาะ LINE User ID ที่ถูกต้อง
+      })
+        .select('_id line_user_id display_name picture_url')
+        .sort({ created_at: 1 });
+      
+      if (limit > 0) {
+        query = query.limit(limit);
+      }
+      
+      const users = await query.lean() as UserToSend[];
+      targetCount = users.length;
+
+      if (targetCount === 0) {
+        // ลบ broadcast record ที่สร้างไว้
+        await Broadcast.findByIdAndDelete(broadcastId);
+        
+        return NextResponse.json({ 
+          success: false, 
+          message: 'ไม่มีผู้ใช้ที่สามารถส่งข้อความได้' 
+        }, { status: 400 });
+      }
+
+      // สร้าง map สำหรับ lookup user info
+      const userMap = new Map<string, UserToSend>();
+      users.forEach(u => userMap.set(u.line_user_id, u));
+
+      const userIds = users.map(u => u.line_user_id);
+
+      // แบ่งเป็น batch ละ 500 คน (LINE API limit)
+      const BATCH_SIZE = 500;
+      const batches: string[][] = [];
+      
+      for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
+        batches.push(userIds.slice(i, i + BATCH_SIZE));
+      }
+
+      console.log(`📤 [Push Broadcast] Starting: ${targetCount} users in ${batches.length} batches, ${lineMessages.length} messages`);
+
+      // ส่งทีละ batch
+      for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
+        const sentAt = new Date();
+        
+        try {
+          await multicastMessage(channel.channel_access_token, batch, lineMessages);
+          sentCount += batch.length;
+          console.log(`✅ [Push Broadcast] Batch ${i + 1}/${batches.length}: ${batch.length} users sent`);
+          
+          // ✅ บันทึกผู้รับที่ส่งสำเร็จ
+          for (const lineUserId of batch) {
+            const userInfo = userMap.get(lineUserId);
+            recipientsToSave.push({
+              broadcast_id: broadcastId,
+              channel_id: channelObjectId,
+              line_user_id: lineUserId,
+              user_id: userInfo?._id || null,
+              display_name: userInfo?.display_name || null,
+              picture_url: userInfo?.picture_url || null,
+              status: 'sent',
+              sent_at: sentAt
+            });
+          }
+          
+        } catch (error: any) {
+          console.error(`❌ [Push Broadcast] Batch ${i + 1} failed:`, error.message);
+          failedCount += batch.length;
+          
+          // ✅ บันทึกผู้รับที่ส่งไม่สำเร็จ
+          for (const lineUserId of batch) {
+            const userInfo = userMap.get(lineUserId);
+            recipientsToSave.push({
+              broadcast_id: broadcastId,
+              channel_id: channelObjectId,
+              line_user_id: lineUserId,
+              user_id: userInfo?._id || null,
+              display_name: userInfo?.display_name || null,
+              picture_url: userInfo?.picture_url || null,
+              status: 'failed',
+              error_message: error.message || 'Unknown error',
+              sent_at: sentAt
+            });
+          }
+        }
+
+        // Delay ระหว่าง batch (ป้องกัน rate limit)
+        if (i < batches.length - 1) {
+          await delay(delay_ms);
+        }
+      }
+
+      console.log(`📤 [Push Broadcast] Completed: ${sentCount} sent, ${failedCount} failed`);
+    }
+
+    // ✅ บันทึก recipients ทั้งหมด (bulk insert)
+    if (recipientsToSave.length > 0) {
+      try {
+        await BroadcastRecipient.insertMany(recipientsToSave, { ordered: false });
+        console.log(`📝 [Broadcast] Saved ${recipientsToSave.length} recipients`);
+      } catch (error: any) {
+        console.error('Save recipients error:', error.message);
+        // ไม่ fail ทั้งหมด ถ้าบันทึก recipients ไม่สำเร็จ
+      }
+    }
+
+    // ✅ อัพเดท Broadcast record
+    await Broadcast.findByIdAndUpdate(broadcastId, {
+      target_count: targetCount,
+      sent_count: sentCount,
+      failed_count: failedCount,
+      status: failedCount === 0 ? 'completed' : (sentCount > 0 ? 'completed' : 'failed')
+    });
 
     return NextResponse.json({
       success: true,
       message: 'ส่ง Broadcast สำเร็จ',
       data: {
-        id: newBroadcast._id,
+        id: broadcastId,
         target_count: targetCount,
         sent_count: sentCount,
         failed_count: failedCount,

@@ -1,12 +1,14 @@
+// src/app/dashboard/broadcast/page.tsx
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
 import { 
   FiMessageCircle, FiSend, FiUsers, FiRadio, FiImage,
-  FiClock, FiCheckCircle, FiXCircle, FiTrash2,
+  FiClock, FiCheckCircle, FiXCircle, FiBarChart2,
   FiFilter, FiCalendar, FiAlertTriangle, FiInfo,
   FiDollarSign, FiZap, FiCode, FiHash, FiPlus,
-  FiChevronUp, FiChevronDown, FiEye, FiX, FiCopy
+  FiChevronUp, FiChevronDown, FiEye, FiX, FiCopy,
+  FiChevronLeft, FiChevronRight, FiSearch, FiUser
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 import { FlexMessageRenderer } from '@/components/FlexMessageRenderer';
@@ -16,7 +18,7 @@ interface Broadcast {
   channel_id: string;
   channel_name: string;
   broadcast_type: 'official' | 'push';
-  message_type: 'text' | 'image' | 'flex';
+  message_type: 'text' | 'image' | 'flex' | 'multi';
   content: string;
   target_count: number;
   sent_count: number;
@@ -40,7 +42,6 @@ interface Channel {
   };
 }
 
-// Message Box interface
 interface MessageBox {
   id: string;
   type: 'text' | 'image' | 'flex';
@@ -52,6 +53,23 @@ interface MessageBox {
     valid: boolean;
     error: string;
   };
+}
+
+// ✅ เพิ่ม Interface สำหรับผู้รับ
+interface Recipient {
+  id: string;
+  line_user_id: string;
+  display_name: string;
+  picture_url?: string;
+  status: 'sent' | 'failed' | 'pending';
+  error_message?: string;
+  sent_at?: string;
+}
+
+interface RecipientStats {
+  sent: number;
+  failed: number;
+  pending: number;
 }
 
 // ฟังก์ชันแสดงเวลาแบบ Asia/Bangkok
@@ -70,7 +88,7 @@ function formatThaiDateTime(dateString: string): string {
 // Generate unique ID
 const generateId = () => Math.random().toString(36).substring(2, 9);
 
-// Validate Flex JSON (รองรับรูปแบบจาก LINE Flex Simulator)
+// Validate Flex JSON
 const validateFlexJson = (json: string): { valid: boolean; error: string; parsed?: any } => {
   if (!json.trim()) {
     return { valid: false, error: 'กรุณาใส่ Flex Message JSON' };
@@ -78,27 +96,345 @@ const validateFlexJson = (json: string): { valid: boolean; error: string; parsed
 
   try {
     const parsed = JSON.parse(json);
-    
-    // รองรับรูปแบบจาก LINE Flex Simulator (ไม่มี type: "flex")
     if (parsed.type === 'bubble' || parsed.type === 'carousel') {
       return { valid: true, error: '', parsed };
     }
-    
-    // รองรับรูปแบบเต็ม (มี type: "flex")
     if (parsed.type === 'flex') {
       if (!parsed.altText) {
-        return { valid: false, error: 'ต้องมี "altText" สำหรับรูปแบบ type: "flex"' };
+        return { valid: false, error: 'ต้องมี "altText"' };
       }
       if (!parsed.contents) {
-        return { valid: false, error: 'ต้องมี "contents" สำหรับรูปแบบ type: "flex"' };
+        return { valid: false, error: 'ต้องมี "contents"' };
       }
       return { valid: true, error: '', parsed };
     }
-    
     return { valid: false, error: 'JSON ต้องมี type เป็น "bubble", "carousel" หรือ "flex"' };
   } catch (e) {
     return { valid: false, error: 'JSON format ไม่ถูกต้อง' };
   }
+};
+
+// ✅ Broadcast Detail Modal Component
+const BroadcastDetailModal: React.FC<{
+  isOpen: boolean;
+  onClose: () => void;
+  broadcast: Broadcast | null;
+}> = ({ isOpen, onClose, broadcast }) => {
+  const [recipients, setRecipients] = useState<Recipient[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [page, setPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [stats, setStats] = useState<RecipientStats>({ sent: 0, failed: 0, pending: 0 });
+  const [filterStatus, setFilterStatus] = useState<string>('');
+  const [search, setSearch] = useState('');
+
+  const fetchRecipients = useCallback(async () => {
+    if (!broadcast) return;
+    
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        page: page.toString(),
+        limit: '20',
+      });
+      if (filterStatus) params.append('status', filterStatus);
+      if (search) params.append('search', search);
+      
+      const res = await fetch(`/api/broadcast/${broadcast.id}/recipients?${params}`);
+      const data = await res.json();
+      
+      if (data.success) {
+        setRecipients(data.data.recipients);
+        setTotalPages(data.data.pagination.totalPages);
+        setTotal(data.data.pagination.total);
+        setStats(data.data.stats);
+      }
+    } catch (error) {
+      console.error('Fetch recipients error:', error);
+    } finally {
+      setLoading(false);
+    }
+  }, [broadcast, page, filterStatus, search]);
+
+  useEffect(() => {
+    if (isOpen && broadcast) {
+      setPage(1);
+      fetchRecipients();
+    }
+  }, [isOpen, broadcast]);
+
+  useEffect(() => {
+    if (isOpen && broadcast) {
+      fetchRecipients();
+    }
+  }, [page, filterStatus]);
+
+  const handleSearch = () => {
+    setPage(1);
+    fetchRecipients();
+  };
+
+  if (!isOpen || !broadcast) return null;
+
+  const statusConfig: Record<string, { label: string; color: string }> = {
+    draft: { label: 'แบบร่าง', color: 'bg-gray-100 text-gray-700' },
+    scheduled: { label: 'ตั้งเวลาไว้', color: 'bg-yellow-100 text-yellow-700' },
+    sending: { label: 'กำลังส่ง', color: 'bg-blue-100 text-blue-700' },
+    completed: { label: 'สำเร็จ', color: 'bg-green-100 text-green-700' },
+    failed: { label: 'ล้มเหลว', color: 'bg-red-100 text-red-700' }
+  };
+
+  const broadcastTypeConfig: Record<string, { label: string; color: string }> = {
+    official: { label: 'Broadcast ปกติ', color: 'bg-blue-100 text-blue-700' },
+    push: { label: 'Push (ฟรี)', color: 'bg-green-100 text-green-700' }
+  };
+
+  const messageTypeConfig: Record<string, { label: string; color: string }> = {
+    text: { label: 'ข้อความ', color: 'bg-gray-100 text-gray-700' },
+    image: { label: 'รูปภาพ', color: 'bg-purple-100 text-purple-700' },
+    flex: { label: 'Flex', color: 'bg-orange-100 text-orange-700' },
+    multi: { label: 'หลายข้อความ', color: 'bg-indigo-100 text-indigo-700' }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden animate-fadeIn flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-100">
+          <div>
+            <h2 className="text-lg font-bold text-gray-900">ข้อมูลเชิงลึก Broadcast</h2>
+            <p className="text-sm text-gray-500">{broadcast.channel_name}</p>
+          </div>
+          <button onClick={onClose} className="p-2 hover:bg-gray-100 rounded-lg">
+            <FiX className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto">
+          {/* Broadcast Info */}
+          <div className="p-6 bg-gray-50 border-b border-gray-100">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {/* Left - Info */}
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${broadcastTypeConfig[broadcast.broadcast_type]?.color}`}>
+                    {broadcastTypeConfig[broadcast.broadcast_type]?.label}
+                  </span>
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${messageTypeConfig[broadcast.message_type]?.color}`}>
+                    {messageTypeConfig[broadcast.message_type]?.label}
+                  </span>
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${statusConfig[broadcast.status]?.color}`}>
+                    {statusConfig[broadcast.status]?.label}
+                  </span>
+                </div>
+                
+                <div className="bg-white rounded-lg p-3 border border-gray-200">
+                  <p className="text-sm text-gray-500 mb-1">เนื้อหาที่ส่ง:</p>
+                  <p className="text-gray-900">{broadcast.content || '-'}</p>
+                </div>
+                
+                {broadcast.sent_at && (
+                  <div className="flex items-center gap-2 text-sm text-gray-600">
+                    <FiClock className="w-4 h-4" />
+                    <span>ส่งเมื่อ: {formatThaiDateTime(broadcast.sent_at)}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Right - Stats */}
+              <div className="grid grid-cols-3 gap-3">
+                <div className="bg-white rounded-lg p-4 border border-gray-200 text-center">
+                  <p className="text-2xl font-bold text-gray-900">{broadcast.target_count.toLocaleString()}</p>
+                  <p className="text-sm text-gray-500">เป้าหมาย</p>
+                </div>
+                <div className="bg-green-50 rounded-lg p-4 border border-green-200 text-center">
+                  <p className="text-2xl font-bold text-green-600">{broadcast.sent_count.toLocaleString()}</p>
+                  <p className="text-sm text-green-600">ส่งสำเร็จ</p>
+                </div>
+                <div className="bg-red-50 rounded-lg p-4 border border-red-200 text-center">
+                  <p className="text-2xl font-bold text-red-600">{broadcast.failed_count.toLocaleString()}</p>
+                  <p className="text-sm text-red-600">ล้มเหลว</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Success Rate */}
+            {broadcast.target_count > 0 && (
+              <div className="mt-4">
+                <div className="flex items-center justify-between text-sm mb-1">
+                  <span className="text-gray-600">อัตราความสำเร็จ</span>
+                  <span className="font-medium text-green-600">
+                    {((broadcast.sent_count / broadcast.target_count) * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div 
+                    className="h-full bg-green-500 rounded-full transition-all"
+                    style={{ width: `${(broadcast.sent_count / broadcast.target_count) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Recipients List */}
+          <div className="p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold text-gray-900 flex items-center gap-2">
+                <FiUsers className="w-5 h-5" />
+                รายชื่อผู้รับ ({total.toLocaleString()} คน)
+              </h3>
+              
+              {/* Filter & Search */}
+              <div className="flex items-center gap-2">
+                <select
+                  value={filterStatus}
+                  onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
+                  className="input py-1.5 text-sm"
+                >
+                  <option value="">ทั้งหมด</option>
+                  <option value="sent">ส่งสำเร็จ</option>
+                  <option value="failed">ล้มเหลว</option>
+                </select>
+                
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+                    placeholder="ค้นหาชื่อ..."
+                    className="input py-1.5 text-sm pl-8 w-40"
+                  />
+                  <FiSearch className="w-4 h-4 absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                </div>
+                <button onClick={handleSearch} className="btn btn-secondary py-1.5 text-sm">
+                  ค้นหา
+                </button>
+              </div>
+            </div>
+
+            {/* Stats Pills */}
+            <div className="flex gap-2 mb-4">
+              <span className="px-3 py-1 bg-green-100 text-green-700 rounded-full text-sm">
+                ✅ ส่งสำเร็จ: {stats.sent.toLocaleString()}
+              </span>
+              <span className="px-3 py-1 bg-red-100 text-red-700 rounded-full text-sm">
+                ❌ ล้มเหลว: {stats.failed.toLocaleString()}
+              </span>
+            </div>
+
+            {/* Recipients Table */}
+            {loading ? (
+              <div className="flex items-center justify-center py-12">
+                <div className="spinner w-8 h-8 border-green-500 border-t-transparent" />
+              </div>
+            ) : recipients.length === 0 ? (
+              <div className="text-center py-12 text-gray-500">
+                <FiUsers className="w-12 h-12 mx-auto text-gray-300 mb-4" />
+                <p>ไม่พบข้อมูลผู้รับ</p>
+                <p className="text-sm mt-1">อาจเป็นเพราะ Broadcast นี้ส่งก่อนที่จะมีฟีเจอร์นี้</p>
+              </div>
+            ) : (
+              <div className="border border-gray-200 rounded-lg overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="text-left px-4 py-3 text-sm font-medium text-gray-600">ผู้ใช้</th>
+                      <th className="text-left px-4 py-3 text-sm font-medium text-gray-600">LINE User ID</th>
+                      <th className="text-center px-4 py-3 text-sm font-medium text-gray-600">สถานะ</th>
+                      <th className="text-left px-4 py-3 text-sm font-medium text-gray-600">เวลาส่ง</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {recipients.map((recipient) => (
+                      <tr key={recipient.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3">
+                          <div className="flex items-center gap-3">
+                            {recipient.picture_url ? (
+                              <img 
+                                src={recipient.picture_url} 
+                                alt={recipient.display_name}
+                                className="w-10 h-10 rounded-full object-cover"
+                              />
+                            ) : (
+                              <div className="w-10 h-10 rounded-full bg-gray-200 flex items-center justify-center">
+                                <FiUser className="w-5 h-5 text-gray-400" />
+                              </div>
+                            )}
+                            <span className="font-medium text-gray-900">{recipient.display_name}</span>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3">
+                          <code className="text-xs bg-gray-100 px-2 py-1 rounded text-gray-600">
+                            {recipient.line_user_id.substring(0, 20)}...
+                          </code>
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                          {recipient.status === 'sent' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-green-100 text-green-700 rounded-full text-xs">
+                              <FiCheckCircle className="w-3 h-3" />
+                              สำเร็จ
+                            </span>
+                          ) : recipient.status === 'failed' ? (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-red-100 text-red-700 rounded-full text-xs" title={recipient.error_message}>
+                              <FiXCircle className="w-3 h-3" />
+                              ล้มเหลว
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2 py-1 bg-gray-100 text-gray-700 rounded-full text-xs">
+                              <FiClock className="w-3 h-3" />
+                              รอดำเนินการ
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-gray-500">
+                          {recipient.sent_at ? formatThaiDateTime(recipient.sent_at) : '-'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+
+            {/* Pagination */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between mt-4">
+                <p className="text-sm text-gray-500">
+                  หน้า {page} จาก {totalPages}
+                </p>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setPage(p => Math.max(1, p - 1))}
+                    disabled={page === 1}
+                    className="btn btn-secondary py-1.5 px-3 disabled:opacity-50"
+                  >
+                    <FiChevronLeft className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                    disabled={page === totalPages}
+                    className="btn btn-secondary py-1.5 px-3 disabled:opacity-50"
+                  >
+                    <FiChevronRight className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-gray-100 bg-gray-50">
+          <button onClick={onClose} className="btn btn-secondary w-full">
+            ปิด
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 };
 
 // Flex Preview Modal Component
@@ -114,7 +450,6 @@ const FlexPreviewModal: React.FC<{
   let flexContent = null;
   
   if (validation.valid && validation.parsed) {
-    // ถ้าเป็นรูปแบบจาก Simulator (bubble/carousel) ใช้ตรงๆ
     if (validation.parsed.type === 'bubble' || validation.parsed.type === 'carousel') {
       flexContent = validation.parsed;
     } else if (validation.parsed.type === 'flex' && validation.parsed.contents) {
@@ -136,14 +471,12 @@ const FlexPreviewModal: React.FC<{
         </div>
         
         <div className="p-4 bg-[#7494C0] min-h-[300px]">
-          {/* Chat bubble style */}
           <div className="flex justify-end mb-4">
             <div className="bg-[#A8D98A] rounded-2xl rounded-tr-sm px-4 py-2 max-w-[70%]">
               <p className="text-sm">ส่ง Flex Message</p>
             </div>
           </div>
           
-          {/* Flex Message Preview */}
           <div className="flex justify-start">
             <div className="max-w-[85%]">
               {validation.valid && flexContent ? (
@@ -156,19 +489,16 @@ const FlexPreviewModal: React.FC<{
             </div>
           </div>
           
-          {/* Alt Text Preview */}
           {altText && (
             <div className="mt-4 p-3 bg-white/90 rounded-lg">
-              <p className="text-xs text-gray-500 mb-1">Alt Text (แสดงในการแจ้งเตือน):</p>
+              <p className="text-xs text-gray-500 mb-1">Alt Text:</p>
               <p className="text-sm text-gray-700">{altText}</p>
             </div>
           )}
         </div>
         
         <div className="p-4 border-t border-gray-100">
-          <button onClick={onClose} className="btn btn-secondary w-full">
-            ปิด
-          </button>
+          <button onClick={onClose} className="btn btn-secondary w-full">ปิด</button>
         </div>
       </div>
     </div>
@@ -196,14 +526,10 @@ const MessageBoxCard: React.FC<{
     onUpdate({
       ...box,
       flexJson,
-      validation: {
-        valid: validation.valid,
-        error: validation.error
-      }
+      validation: { valid: validation.valid, error: validation.error }
     });
   };
 
-  // Sample Flex from LINE Simulator format
   const sampleFlexSimulator = `{
   "type": "bubble",
   "size": "giga",
@@ -213,41 +539,55 @@ const MessageBoxCard: React.FC<{
     "contents": [
       {
         "type": "text",
-        "text": "🎉 โปรโมชั่นพิเศษ!",
+        "text": "สวัสดี!",
         "weight": "bold",
-        "size": "xl",
-        "color": "#1DB446"
-      },
-      {
-        "type": "text",
-        "text": "รับส่วนลด 20% สำหรับสมาชิกใหม่",
-        "margin": "md",
-        "wrap": true
+        "size": "xl"
       }
-    ],
-    "backgroundColor": "#FFFFFF",
-    "paddingAll": "20px"
+    ]
   }
 }`;
 
   return (
-    <div className="border-2 border-blue-200 rounded-xl bg-blue-50/50 overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 bg-blue-100">
-        <span className="px-3 py-1 bg-blue-500 text-white text-sm font-medium rounded-full">
-          ข้อความที่ {index + 1}
-        </span>
+    <div className="border border-gray-200 rounded-xl overflow-hidden bg-white">
+      <div className="flex items-center justify-between p-3 bg-gray-50 border-b border-gray-200">
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-medium text-gray-700">ข้อความ #{index + 1}</span>
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => handleTypeChange('text')}
+              className={`px-3 py-1 text-xs rounded-lg transition-colors ${
+                box.type === 'text' ? 'bg-green-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              ข้อความ
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTypeChange('image')}
+              className={`px-3 py-1 text-xs rounded-lg transition-colors ${
+                box.type === 'image' ? 'bg-purple-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              รูปภาพ
+            </button>
+            <button
+              type="button"
+              onClick={() => handleTypeChange('flex')}
+              className={`px-3 py-1 text-xs rounded-lg transition-colors ${
+                box.type === 'flex' ? 'bg-orange-500 text-white' : 'bg-white text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              Flex
+            </button>
+          </div>
+        </div>
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={onMoveUp}
             disabled={index === 0}
-            className={`p-1.5 rounded-lg transition-colors ${
-              index === 0 
-                ? 'text-gray-300 cursor-not-allowed' 
-                : 'text-blue-600 hover:bg-blue-200'
-            }`}
-            title="ขึ้น"
+            className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded disabled:opacity-30"
           >
             <FiChevronUp className="w-4 h-4" />
           </button>
@@ -255,214 +595,99 @@ const MessageBoxCard: React.FC<{
             type="button"
             onClick={onMoveDown}
             disabled={index === total - 1}
-            className={`p-1.5 rounded-lg transition-colors ${
-              index === total - 1 
-                ? 'text-gray-300 cursor-not-allowed' 
-                : 'text-blue-600 hover:bg-blue-200'
-            }`}
-            title="ลง"
+            className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded disabled:opacity-30"
           >
             <FiChevronDown className="w-4 h-4" />
           </button>
-          <button
-            type="button"
-            onClick={onDelete}
-            className="p-1.5 text-red-500 hover:bg-red-100 rounded-lg transition-colors ml-2"
-            title="ลบ"
-          >
-            <FiTrash2 className="w-4 h-4" />
-          </button>
+          {total > 1 && (
+            <button
+              type="button"
+              onClick={onDelete}
+              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded ml-2"
+            >
+              <FiX className="w-4 h-4" />
+            </button>
+          )}
         </div>
       </div>
 
-      {/* Content */}
-      <div className="p-4 space-y-4">
-        {/* Message Type Selection */}
-        <div className="grid grid-cols-3 gap-2">
-          <button
-            type="button"
-            onClick={() => handleTypeChange('text')}
-            className={`flex items-center justify-center gap-2 py-3 rounded-lg border-2 transition-all ${
-              box.type === 'text' 
-                ? 'border-blue-500 bg-white text-blue-600' 
-                : 'border-gray-200 bg-white hover:border-gray-300'
-            }`}
-          >
-            <FiMessageCircle className="w-4 h-4" />
-            <span className="text-sm font-medium">ข้อความ</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleTypeChange('image')}
-            className={`flex items-center justify-center gap-2 py-3 rounded-lg border-2 transition-all ${
-              box.type === 'image' 
-                ? 'border-blue-500 bg-white text-blue-600' 
-                : 'border-gray-200 bg-white hover:border-gray-300'
-            }`}
-          >
-            <FiImage className="w-4 h-4" />
-            <span className="text-sm font-medium">รูปภาพ</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => handleTypeChange('flex')}
-            className={`flex items-center justify-center gap-2 py-3 rounded-lg border-2 transition-all ${
-              box.type === 'flex' 
-                ? 'border-blue-500 bg-white text-blue-600' 
-                : 'border-gray-200 bg-white hover:border-gray-300'
-            }`}
-          >
-            <FiCode className="w-4 h-4" />
-            <span className="text-sm font-medium">Flex Message</span>
-          </button>
-        </div>
-
-        {/* Text Input */}
+      <div className="p-4">
         {box.type === 'text' && (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              <FiMessageCircle className="w-4 h-4 inline mr-1" />
-              ข้อความ
-            </label>
-            <textarea
-              value={box.content}
-              onChange={(e) => onUpdate({ ...box, content: e.target.value })}
-              className="input w-full"
-              rows={4}
-              placeholder="พิมพ์ข้อความที่ต้องการส่ง..."
-              maxLength={5000}
-            />
-            <p className="text-xs text-gray-500 mt-1 text-right">{box.content.length}/5000</p>
-          </div>
+          <textarea
+            value={box.content}
+            onChange={(e) => onUpdate({ ...box, content: e.target.value })}
+            placeholder="พิมพ์ข้อความที่ต้องการส่ง..."
+            className="input min-h-[100px] resize-none"
+            required
+          />
         )}
 
-        {/* Image Input */}
         {box.type === 'image' && (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              <FiImage className="w-4 h-4 inline mr-1" />
-              URL รูปภาพ
-            </label>
+          <div className="space-y-2">
             <input
               type="url"
               value={box.imageUrl}
               onChange={(e) => onUpdate({ ...box, imageUrl: e.target.value })}
-              className="input w-full"
-              placeholder="https://example.com/image.jpg"
+              placeholder="URL รูปภาพ (https://...)"
+              className="input"
+              required
             />
-            <p className="text-xs text-gray-500 mt-1">รองรับ JPEG, PNG ขนาดไม่เกิน 10MB</p>
             {box.imageUrl && (
-              <div className="mt-2">
-                <img 
-                  src={box.imageUrl} 
-                  alt="Preview" 
-                  className="max-h-32 rounded-lg border border-gray-200"
-                  onError={(e) => {
-                    (e.target as HTMLImageElement).style.display = 'none';
-                  }}
-                />
+              <div className="border border-gray-200 rounded-lg p-2">
+                <img src={box.imageUrl} alt="Preview" className="max-h-48 mx-auto rounded" />
               </div>
             )}
           </div>
         )}
 
-        {/* Flex Input */}
         {box.type === 'flex' && (
           <div className="space-y-3">
-            {/* Flex JSON Editor */}
             <div>
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-sm font-medium text-gray-700">
-                  <FiCode className="w-4 h-4 inline mr-1" />
-                  Flex Message JSON
-                </label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => handleFlexChange(sampleFlexSimulator)}
-                    className="text-xs text-blue-600 hover:text-blue-700 hover:underline"
-                  >
-                    ใส่ตัวอย่าง
-                  </button>
-                  {box.flexJson && box.validation.valid && (
-                    <button
-                      type="button"
-                      onClick={() => setShowPreview(true)}
-                      className="text-xs text-green-600 hover:text-green-700 flex items-center gap-1"
-                    >
-                      <FiEye className="w-3 h-3" />
-                      ดูตัวอย่าง
-                    </button>
-                  )}
-                </div>
-              </div>
-              <textarea
-                value={box.flexJson}
-                onChange={(e) => handleFlexChange(e.target.value)}
-                className={`input w-full font-mono text-sm ${
-                  box.flexJson && !box.validation.valid ? 'border-red-500 focus:ring-red-500' : ''
-                }`}
-                rows={8}
-                placeholder={`วาง Flex JSON จาก LINE Flex Message Simulator\n{\n  "type": "bubble",\n  "body": {...}\n}`}
-              />
-              
-              {/* Validation Status */}
-              {box.flexJson && (
-                <div className={`mt-2 p-2 rounded-lg text-sm flex items-center gap-2 ${
-                  box.validation.valid 
-                    ? 'bg-green-50 text-green-700' 
-                    : 'bg-red-50 text-red-700'
-                }`}>
-                  {box.validation.valid ? (
-                    <>
-                      <FiCheckCircle className="w-4 h-4" />
-                      <span>JSON ถูกต้อง ✓</span>
-                    </>
-                  ) : (
-                    <>
-                      <FiXCircle className="w-4 h-4" />
-                      <span>{box.validation.error}</span>
-                    </>
-                  )}
-                </div>
-              )}
-              
-              <p className="text-xs text-gray-500 mt-2">
-                💡 วาง Flex Message JSON ที่สร้างจาก{' '}
-                <a 
-                  href="https://developers.line.biz/flex-simulator/" 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="text-green-600 hover:underline"
-                >
-                  LINE Flex Message Simulator
-                </a>
-                {' '}ได้โดยตรง (ไม่ต้องมี "type": "flex")
-              </p>
-            </div>
-
-            {/* Alt Text */}
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                <FiInfo className="w-4 h-4 inline mr-1" />
-                Alt Text (ข้อความแสดงแทน)
-              </label>
               <input
                 type="text"
                 value={box.altText}
                 onChange={(e) => onUpdate({ ...box, altText: e.target.value })}
-                className="input w-full"
-                placeholder="ข้อความที่แสดงในการแจ้งเตือน"
+                placeholder="Alt Text (แสดงในการแจ้งเตือน)"
+                className="input mb-2"
               />
-              <p className="text-xs text-gray-500 mt-1">
-                ข้อความที่จะแสดงในการแจ้งเตือนและเมื่อไม่สามารถแสดง Flex ได้
-              </p>
+              <div className="relative">
+                <textarea
+                  value={box.flexJson}
+                  onChange={(e) => handleFlexChange(e.target.value)}
+                  placeholder="วาง Flex JSON ที่นี่..."
+                  className={`input min-h-[150px] font-mono text-sm resize-none ${
+                    box.flexJson && !box.validation.valid ? 'border-red-300 bg-red-50' : ''
+                  }`}
+                />
+                {box.flexJson && !box.validation.valid && (
+                  <p className="text-red-500 text-sm mt-1">⚠️ {box.validation.error}</p>
+                )}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => handleFlexChange(sampleFlexSimulator)}
+                className="btn btn-secondary text-xs py-1.5"
+              >
+                <FiCopy className="w-3 h-3 mr-1" />
+                ตัวอย่าง
+              </button>
+              {box.flexJson && box.validation.valid && (
+                <button
+                  type="button"
+                  onClick={() => setShowPreview(true)}
+                  className="btn btn-secondary text-xs py-1.5"
+                >
+                  <FiEye className="w-3 h-3 mr-1" />
+                  ดูตัวอย่าง
+                </button>
+              )}
             </div>
           </div>
         )}
       </div>
 
-      {/* Flex Preview Modal */}
       <FlexPreviewModal
         isOpen={showPreview}
         onClose={() => setShowPreview(false)}
@@ -473,18 +698,23 @@ const MessageBoxCard: React.FC<{
   );
 };
 
+// Main Component
 export default function BroadcastPage() {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCompose, setShowCompose] = useState(false);
   const [sending, setSending] = useState(false);
-  const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [userCount, setUserCount] = useState<number>(0);
+  const [filterStatus, setFilterStatus] = useState('all');
   
+  // ✅ State สำหรับ Detail Modal
+  const [showDetail, setShowDetail] = useState(false);
+  const [selectedBroadcast, setSelectedBroadcast] = useState<Broadcast | null>(null);
+
   // Form state
   const [channelId, setChannelId] = useState('');
   const [broadcastType, setBroadcastType] = useState<'official' | 'push'>('push');
+  const [userCount, setUserCount] = useState(0);
   const [limit, setLimit] = useState(0);
   const [messageBoxes, setMessageBoxes] = useState<MessageBox[]>([
     {
@@ -505,9 +735,7 @@ export default function BroadcastPage() {
 
   useEffect(() => {
     if (channelId) {
-      fetchUserCount(channelId);
-    } else {
-      setUserCount(0);
+      fetchUserCount();
     }
   }, [channelId]);
 
@@ -519,7 +747,7 @@ export default function BroadcastPage() {
         setBroadcasts(data.data);
       }
     } catch (error) {
-      console.error('Error fetching broadcasts:', error);
+      console.error('Fetch broadcasts error:', error);
     } finally {
       setLoading(false);
     }
@@ -530,42 +758,31 @@ export default function BroadcastPage() {
       const res = await fetch('/api/channels');
       const data = await res.json();
       if (data.success) {
-        // กรองเฉพาะ channels ที่มีสิทธิ์ broadcast (isOwner หรือ can_broadcast = true)
-        const broadcastableChannels = data.data.filter((ch: Channel) => 
-          ch.isOwner || ch.permissions?.can_broadcast === true
+        const filtered = data.data.filter((ch: Channel) =>
+          ch.isOwner || ch.permissions?.can_broadcast
         );
-        setChannels(broadcastableChannels);
+        setChannels(filtered);
       }
     } catch (error) {
-      console.error('Error fetching channels:', error);
+      console.error('Fetch channels error:', error);
     }
   };
 
-  const fetchUserCount = async (chId: string) => {
+  const fetchUserCount = async () => {
     try {
-      const res = await fetch(`/api/broadcast/user-count?channel_id=${chId}`);
+      const res = await fetch(`/api/broadcast/user-count?channel_id=${channelId}`);
       const data = await res.json();
       if (data.success) {
         setUserCount(data.data.count);
       }
     } catch (error) {
-      console.error('Error fetching user count:', error);
+      console.error('Fetch user count error:', error);
     }
   };
 
-  // Message Box handlers
   const addMessageBox = () => {
-    if (messageBoxes.length >= 5) {
-      Swal.fire({ 
-        icon: 'warning', 
-        title: 'เกินจำนวนที่กำหนด', 
-        text: 'สามารถส่งได้สูงสุด 5 ข้อความต่อครั้ง' 
-      });
-      return;
-    }
-    setMessageBoxes([
-      ...messageBoxes,
-      {
+    if (messageBoxes.length < 5) {
+      setMessageBoxes([...messageBoxes, {
         id: generateId(),
         type: 'text',
         content: '',
@@ -573,8 +790,8 @@ export default function BroadcastPage() {
         flexJson: '',
         altText: '',
         validation: { valid: true, error: '' }
-      }
-    ]);
+      }]);
+    }
   };
 
   const updateMessageBox = (index: number, box: MessageBox) => {
@@ -584,84 +801,51 @@ export default function BroadcastPage() {
   };
 
   const deleteMessageBox = (index: number) => {
-    if (messageBoxes.length <= 1) {
-      Swal.fire({ icon: 'warning', title: 'ต้องมีอย่างน้อย 1 ข้อความ' });
-      return;
+    if (messageBoxes.length > 1) {
+      setMessageBoxes(messageBoxes.filter((_, i) => i !== index));
     }
-    const newBoxes = messageBoxes.filter((_, i) => i !== index);
-    setMessageBoxes(newBoxes);
   };
 
   const moveMessageBox = (index: number, direction: 'up' | 'down') => {
-    const newIndex = direction === 'up' ? index - 1 : index + 1;
-    if (newIndex < 0 || newIndex >= messageBoxes.length) return;
-    
     const newBoxes = [...messageBoxes];
-    [newBoxes[index], newBoxes[newIndex]] = [newBoxes[newIndex], newBoxes[index]];
-    setMessageBoxes(newBoxes);
+    const targetIndex = direction === 'up' ? index - 1 : index + 1;
+    if (targetIndex >= 0 && targetIndex < newBoxes.length) {
+      [newBoxes[index], newBoxes[targetIndex]] = [newBoxes[targetIndex], newBoxes[index]];
+      setMessageBoxes(newBoxes);
+    }
   };
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!channelId) {
-      Swal.fire({ icon: 'warning', title: 'กรุณาเลือก Channel' });
-      return;
-    }
-
-    // Validate all message boxes
-    const errors: string[] = [];
-    messageBoxes.forEach((box, i) => {
-      if (box.type === 'text' && !box.content.trim()) {
-        errors.push(`ข้อความที่ ${i + 1}: กรุณาใส่ข้อความ`);
-      }
-      if (box.type === 'image' && !box.imageUrl.trim()) {
-        errors.push(`ข้อความที่ ${i + 1}: กรุณาใส่ URL รูปภาพ`);
-      }
-      if (box.type === 'flex') {
-        if (!box.flexJson.trim()) {
-          errors.push(`ข้อความที่ ${i + 1}: กรุณาใส่ Flex JSON`);
-        } else if (!box.validation.valid) {
-          errors.push(`ข้อความที่ ${i + 1}: ${box.validation.error}`);
-        }
-      }
-    });
-
-    if (errors.length > 0) {
-      Swal.fire({ 
-        icon: 'warning', 
-        title: 'ข้อมูลไม่ครบถ้วน', 
-        html: errors.map(e => `• ${e}`).join('<br/>') 
-      });
-      return;
-    }
-
-    const channel = channels.find(c => c.id === channelId);
-    const maxCount = broadcastType === 'official' 
-      ? channel?.followers_count || 0 
-      : userCount;
-    const targetCount = limit > 0 ? Math.min(limit, maxCount) : maxCount;
+    const hasInvalidFlex = messageBoxes.some(
+      box => box.type === 'flex' && !box.validation.valid
+    );
     
+    if (hasInvalidFlex) {
+      Swal.fire({ icon: 'error', title: 'Flex JSON ไม่ถูกต้อง', text: 'กรุณาตรวจสอบ Flex JSON' });
+      return;
+    }
+
+    const messages = messageBoxes.map(box => {
+      if (box.type === 'text') {
+        return { type: 'text', content: box.content };
+      } else if (box.type === 'image') {
+        return { type: 'image', content: box.imageUrl };
+      } else {
+        return { type: 'flex', content: box.flexJson, altText: box.altText || 'Flex Message' };
+      }
+    }).filter(m => m.content);
+
+    if (messages.length === 0) {
+      Swal.fire({ icon: 'warning', title: 'กรุณาใส่ข้อความ' });
+      return;
+    }
+
     const result = await Swal.fire({
-      title: 'ยืนยันการส่ง Broadcast',
-      html: `
-        <div class="text-left space-y-2">
-          <p><strong>Channel:</strong> ${channel?.channel_name}</p>
-          <p><strong>ประเภท:</strong> ${broadcastType === 'official' ? '📢 Broadcast ปกติ' : '🚀 Push Broadcast (ฟรี)'}</p>
-          <p><strong>จำนวนข้อความ:</strong> ${messageBoxes.length} ข้อความ</p>
-          <p><strong>จำนวนเป้าหมาย:</strong> ${targetCount.toLocaleString()} / ${maxCount.toLocaleString()} คน</p>
-          ${broadcastType === 'push' ? `
-            <div class="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm">
-              <p class="text-green-700">✅ <strong>ฟรี!</strong> ไม่เสียค่าส่ง</p>
-            </div>
-          ` : `
-            <div class="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
-              <p class="text-blue-700">💰 ใช้โควต้า LINE OA</p>
-            </div>
-          `}
-        </div>
-      `,
       icon: 'question',
+      title: 'ยืนยันการส่ง?',
+      html: `ส่ง ${messages.length} ข้อความ ไปยัง ${limit > 0 ? limit.toLocaleString() : userCount.toLocaleString()} คน`,
       showCancelButton: true,
       confirmButtonColor: '#06C755',
       cancelButtonColor: '#6B7280',
@@ -671,33 +855,7 @@ export default function BroadcastPage() {
 
     if (result.isConfirmed) {
       setSending(true);
-      
-      Swal.fire({
-        title: 'กำลังส่ง Broadcast...',
-        html: `<div class="text-center"><div class="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto mb-4"></div><p>กำลังส่งไปยัง ${targetCount.toLocaleString()} คน</p></div>`,
-        allowOutsideClick: false,
-        showConfirmButton: false
-      });
-
       try {
-        // Prepare messages
-        const messages = messageBoxes.map(box => {
-          if (box.type === 'text') {
-            return { type: 'text', content: box.content };
-          }
-          if (box.type === 'image') {
-            return { type: 'image', content: box.imageUrl };
-          }
-          if (box.type === 'flex') {
-            return { 
-              type: 'flex', 
-              content: box.flexJson,
-              altText: box.altText || 'Flex Message'
-            };
-          }
-          return null;
-        }).filter(Boolean);
-
         const res = await fetch('/api/broadcast/send', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -729,7 +887,7 @@ export default function BroadcastPage() {
           resetForm();
           fetchBroadcasts();
         } else {
-          throw new Error(data.message || data.error);
+          throw new Error(data.message);
         }
       } catch (error: any) {
         Swal.fire({ icon: 'error', title: 'เกิดข้อผิดพลาด', text: error.message });
@@ -739,50 +897,28 @@ export default function BroadcastPage() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    const result = await Swal.fire({
-      title: 'ยืนยันการลบ',
-      text: 'คุณต้องการลบ Broadcast นี้หรือไม่?',
-      icon: 'warning',
-      showCancelButton: true,
-      confirmButtonColor: '#EF4444',
-      cancelButtonColor: '#6B7280',
-      confirmButtonText: 'ลบ',
-      cancelButtonText: 'ยกเลิก'
-    });
-
-    if (result.isConfirmed) {
-      try {
-        const res = await fetch(`/api/broadcast/${id}`, { method: 'DELETE' });
-        const data = await res.json();
-        if (data.success) {
-          Swal.fire({ icon: 'success', title: 'ลบสำเร็จ', timer: 1500, showConfirmButton: false });
-          fetchBroadcasts();
-        }
-      } catch (error) {
-        Swal.fire({ icon: 'error', title: 'เกิดข้อผิดพลาด' });
-      }
-    }
-  };
-
   const resetForm = () => {
     setChannelId('');
     setBroadcastType('push');
     setLimit(0);
-    setMessageBoxes([
-      {
-        id: generateId(),
-        type: 'text',
-        content: '',
-        imageUrl: '',
-        flexJson: '',
-        altText: '',
-        validation: { valid: true, error: '' }
-      }
-    ]);
+    setMessageBoxes([{
+      id: generateId(),
+      type: 'text',
+      content: '',
+      imageUrl: '',
+      flexJson: '',
+      altText: '',
+      validation: { valid: true, error: '' }
+    }]);
   };
 
-  const filteredBroadcasts = broadcasts.filter(b => 
+  // ✅ ฟังก์ชันเปิด Detail Modal
+  const handleViewDetail = (broadcast: Broadcast) => {
+    setSelectedBroadcast(broadcast);
+    setShowDetail(true);
+  };
+
+  const filteredBroadcasts = broadcasts.filter(b =>
     filterStatus === 'all' || b.status === filterStatus
   );
 
@@ -815,7 +951,7 @@ export default function BroadcastPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto">
+    <div className="max-w-5xl mx-auto p-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
@@ -838,8 +974,7 @@ export default function BroadcastPage() {
             <div>
               <h3 className="font-semibold text-green-800">🚀 Push Broadcast (แนะนำ)</h3>
               <p className="text-sm text-green-600 mt-1">
-                <strong>ฟรี 100%!</strong> ส่งไปหาคนที่เคยทักมาหา Channel<br/>
-                <span className="text-green-500">• ไม่เสียค่าส่ง • รองรับ Flex Message • ส่งได้สูงสุด 5 ข้อความ</span>
+                <strong>ฟรี 100%!</strong> ส่งไปหาคนที่เคยทักมาหา Channel
               </p>
             </div>
           </div>
@@ -853,8 +988,7 @@ export default function BroadcastPage() {
             <div>
               <h3 className="font-semibold text-blue-800">📢 Broadcast ปกติ</h3>
               <p className="text-sm text-blue-600 mt-1">
-                ส่งถึงทุกคนที่ Follow (รวมคนที่ไม่ทักมา)<br/>
-                <span className="text-blue-500">• ต้องซื้อ Package รายเดือน</span>
+                ส่งถึงทุกคนที่ Follow (ต้องซื้อ Package)
               </p>
             </div>
           </div>
@@ -897,7 +1031,7 @@ export default function BroadcastPage() {
               const msgType = messageTypeConfig[broadcast.message_type] || messageTypeConfig.text;
               const StatusIcon = status.icon;
               const TypeIcon = bcType.icon;
-              
+
               return (
                 <div key={broadcast.id} className="p-4 hover:bg-gray-50">
                   <div className="flex items-start justify-between gap-4">
@@ -917,7 +1051,7 @@ export default function BroadcastPage() {
                         </span>
                       </div>
                       <p className="text-gray-900 line-clamp-2">
-                        {broadcast.message_type === 'flex' ? '[Flex Message]' : broadcast.content}
+                        {broadcast.content}
                       </p>
                       <div className="flex items-center gap-4 mt-2 text-sm text-gray-500">
                         <span className="flex items-center gap-1">
@@ -932,11 +1066,13 @@ export default function BroadcastPage() {
                         )}
                       </div>
                     </div>
+                    {/* ✅ เปลี่ยนจากปุ่มลบเป็นปุ่มดูข้อมูลเชิงลึก */}
                     <button
-                      onClick={() => handleDelete(broadcast.id)}
-                      className="p-2 text-gray-500 hover:text-red-500 hover:bg-red-50 rounded-lg"
+                      onClick={() => handleViewDetail(broadcast)}
+                      className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg"
+                      title="ดูข้อมูลเชิงลึก"
                     >
-                      <FiTrash2 className="w-4 h-4" />
+                      <FiBarChart2 className="w-5 h-5" />
                     </button>
                   </div>
                 </div>
@@ -945,6 +1081,13 @@ export default function BroadcastPage() {
           </div>
         )}
       </div>
+
+      {/* ✅ Detail Modal */}
+      <BroadcastDetailModal
+        isOpen={showDetail}
+        onClose={() => { setShowDetail(false); setSelectedBroadcast(null); }}
+        broadcast={selectedBroadcast}
+      />
 
       {/* Compose Modal */}
       {showCompose && (
@@ -1001,7 +1144,7 @@ export default function BroadcastPage() {
                       <p className="text-xs text-green-600 mt-1 font-medium">👥 ส่งได้ {userCount.toLocaleString()} คน</p>
                     )}
                   </button>
-                  
+
                   <button
                     type="button"
                     onClick={() => setBroadcastType('official')}
@@ -1016,11 +1159,6 @@ export default function BroadcastPage() {
                       </span>
                     </div>
                     <p className="text-xs text-gray-500">ใช้โควต้า LINE OA</p>
-                    {channelId && (
-                      <p className="text-xs text-blue-600 mt-1 font-medium">
-                        👥 {channels.find(c => c.id === channelId)?.followers_count?.toLocaleString() || 0} คน
-                      </p>
-                    )}
                   </button>
                 </div>
               </div>
@@ -1044,16 +1182,9 @@ export default function BroadcastPage() {
                     />
                     <span className="text-sm text-gray-500">
                       / {userCount.toLocaleString()} คน
-                      {limit > 0 && limit <= userCount && (
-                        <span className="text-green-600 ml-2">
-                          (ส่งคนที่ 1 - {limit.toLocaleString()})
-                        </span>
-                      )}
                     </span>
                   </div>
-                  <p className="text-xs text-gray-500 mt-1">
-                    เว้นว่างหรือใส่ 0 = ส่งทั้งหมด • เรียงตามวันที่ทักมา (เก่า → ใหม่)
-                  </p>
+                  <p className="text-xs text-gray-500 mt-1">เว้นว่างหรือใส่ 0 = ส่งทั้งหมด</p>
                 </div>
               )}
 
@@ -1079,7 +1210,6 @@ export default function BroadcastPage() {
                   />
                 ))}
 
-                {/* Add Message Button */}
                 {messageBoxes.length < 5 && (
                   <button
                     type="button"
@@ -1101,8 +1231,6 @@ export default function BroadcastPage() {
                       <p className="text-amber-700 font-medium">ข้อจำกัดของ Push Broadcast</p>
                       <ul className="text-amber-600 mt-1 space-y-0.5">
                         <li>• ส่งได้เฉพาะคนที่เคยทักมาหา Channel นี้</li>
-                        <li>• ไม่สามารถดึง followers ที่ไม่ทักมาได้ (LINE API ไม่รองรับ)</li>
-                        <li>• ระบบส่งแบบ batch 500 คน/ครั้ง ป้องกัน rate limit</li>
                         <li>• ส่งได้สูงสุด 5 ข้อความต่อครั้ง</li>
                       </ul>
                     </div>

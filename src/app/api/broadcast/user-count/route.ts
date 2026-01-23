@@ -1,3 +1,4 @@
+// src/app/api/broadcast/user-count/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { LineUser, LineChannel, AdminPermission } from '@/models';
@@ -28,14 +29,10 @@ export async function GET(request: NextRequest) {
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    // ✅ ตรวจสอบสิทธิ์เข้าถึง channel (เฉพาะ active)
-    const channel = await LineChannel.findOne({
-      _id: channelId,
-      status: 'active' // ✅ เพิ่ม filter
-    });
-    
+    // ตรวจสอบสิทธิ์เข้าถึง channel
+    const channel = await LineChannel.findById(channelId);
     if (!channel) {
-      return NextResponse.json({ success: false, message: 'ไม่พบ Channel หรือ Channel ถูกปิดใช้งานแล้ว' }, { status: 404 });
+      return NextResponse.json({ success: false, message: 'ไม่พบ Channel' }, { status: 404 });
     }
 
     const isOwner = channel.user_id.equals(userId);
@@ -58,13 +55,12 @@ export async function GET(request: NextRequest) {
     // นับจำนวน users ที่:
     // 1. เป็น source_type = 'user' (ไม่ใช่ group/room)
     // 2. follow_status != 'unfollowed' และ != 'blocked'
-    // ✅ 3. is_spam != true และ is_blocked != true
+    // ✅ 3. line_user_id ต้องเป็นรูปแบบที่ถูกต้อง (ขึ้นต้นด้วย U + 32 hex chars)
     const count = await LineUser.countDocuments({
       channel_id: new mongoose.Types.ObjectId(channelId),
       source_type: 'user',
       follow_status: { $nin: ['unfollowed', 'blocked'] },
-      is_spam: { $ne: true },     // ✅ เพิ่ม filter
-      is_blocked: { $ne: true }   // ✅ เพิ่ม filter
+      line_user_id: { $regex: /^U[a-f0-9]{32}$/i } // ✅ เฉพาะ LINE User ID ที่ถูกต้อง
     });
 
     return NextResponse.json({ 

@@ -8,6 +8,7 @@ export { default as Tag, type ITag } from './Tag';
 export { default as QuickReply, type IQuickReply } from './QuickReply';
 export { default as AdminPermission, type IAdminPermission, type IAdminPermissions } from './AdminPermission';
 export { default as Broadcast, type IBroadcast } from './Broadcast';
+export { default as BroadcastRecipient, type IBroadcastRecipient } from './BroadcastRecipient';
 
 // Import mongodb connection to ensure it's initialized
 import '../lib/mongodb';
