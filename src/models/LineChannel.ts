@@ -10,7 +10,8 @@ export interface ILineChannel extends Document {
   webhook_url?: string;
   basic_id?: string;
   picture_url?: string;
-  status: 'active' | 'inactive';
+  status: 'active' | 'inactive' | 'deleted'; // ✅ เพิ่ม 'deleted'
+  deleted_at?: Date;
   created_at: Date;
   updated_at: Date;
 }
@@ -46,8 +47,14 @@ const LineChannelSchema = new Schema<ILineChannel>(
     picture_url: String,
     status: {
       type: String,
-      enum: ['active', 'inactive'],
+      enum: ['active', 'inactive', 'deleted'], // ✅ เพิ่ม 'deleted'
       default: 'active',
+      index: true,
+    },
+    deleted_at: {
+      type: Date,
+      default: null,
+      sparse: true,
       index: true,
     },
   },

@@ -23,8 +23,28 @@ export async function GET(request: NextRequest) {
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    // ดึง channels ที่ user เป็น owner
-    const ownedChannels = await LineChannel.find({ user_id: userId }).lean();
+    // ✅ ตรวจสอบว่าต้องการดู channels ประเภทไหน
+    const { searchParams } = new URL(request.url);
+    const statusFilter = searchParams.get('status'); // 'active', 'inactive', 'deleted', 'all'
+
+    // กำหนด status filter
+    let queryStatusFilter: any = { status: 'active' }; // default
+    if (statusFilter === 'inactive') {
+      queryStatusFilter = { status: 'inactive' };
+    } else if (statusFilter === 'deleted') {
+      queryStatusFilter = { status: 'deleted' };
+    } else if (statusFilter === 'all') {
+      queryStatusFilter = {}; // ไม่ filter status
+    } else if (statusFilter === 'not_active') {
+      // ดูทั้ง inactive และ deleted
+      queryStatusFilter = { status: { $in: ['inactive', 'deleted'] } };
+    }
+
+    // ดึง channels ที่ user เป็น owner (✅ เพิ่ม status filter)
+    const ownedChannels = await LineChannel.find({ 
+      user_id: userId,
+      ...queryStatusFilter
+    }).lean();
 
     // ดึง admin permissions
     const adminPerms = await AdminPermission.find({
@@ -51,19 +71,21 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // ดึง specific channels
+    // ดึง specific channels (✅ เพิ่ม status filter)
     let additionalChannels: any[] = [];
     if (additionalChannelIds.length > 0) {
       additionalChannels = await LineChannel.find({
-        _id: { $in: additionalChannelIds }
+        _id: { $in: additionalChannelIds },
+        ...queryStatusFilter
       }).lean();
     }
 
-    // ดึง channels ของ owners ที่มีสิทธิ์ทั้งหมด
+    // ดึง channels ของ owners ที่มีสิทธิ์ทั้งหมด (✅ เพิ่ม status filter)
     let ownerChannels: any[] = [];
     if (ownerIdsForAllChannels.length > 0) {
       ownerChannels = await LineChannel.find({
-        user_id: { $in: ownerIdsForAllChannels }
+        user_id: { $in: ownerIdsForAllChannels },
+        ...queryStatusFilter
       }).lean();
     }
 
@@ -132,7 +154,8 @@ export async function GET(request: NextRequest) {
       followers_count: ch.followers_count,
       isOwner: ch.isOwner,
       permissions: ch.permissions,
-      created_at: ch.created_at
+      created_at: ch.created_at,
+      deleted_at: ch.deleted_at // ✅ เพิ่มเวลาที่ลบ (ถ้ามี)
     }));
 
     return NextResponse.json({ success: true, data: channels });
@@ -166,10 +189,56 @@ export async function POST(request: NextRequest) {
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    // ตรวจสอบว่า channel_id ซ้ำหรือไม่
+    // ✅ ตรวจสอบว่า channel_id ซ้ำหรือไม่ (รวมทุก status)
     const existingChannel = await LineChannel.findOne({ channel_id, user_id: userId });
+    
     if (existingChannel) {
-      return NextResponse.json({ success: false, message: 'Channel ID นี้มีอยู่แล้ว' }, { status: 400 });
+      // ✅ ถ้า channel เดิมเป็น 'deleted' → restore + update credentials อัตโนมัติ
+      if (existingChannel.status === 'deleted') {
+        // ดึงข้อมูล Channel จาก LINE API
+        let channelInfo: any = {};
+        try {
+          channelInfo = await getChannelInfo(channel_access_token);
+        } catch (e) {
+          console.error('Get channel info error:', e);
+        }
+
+        // Restore channel + update credentials
+        await LineChannel.findByIdAndUpdate(existingChannel._id, {
+          status: 'active',
+          channel_name,
+          channel_secret,
+          channel_access_token,
+          basic_id: channelInfo.basicId || existingChannel.basic_id,
+          picture_url: channelInfo.pictureUrl || existingChannel.picture_url,
+          $unset: { deleted_at: 1 }
+        });
+
+        return NextResponse.json({
+          success: true,
+          message: 'กู้คืน Channel สำเร็จ พร้อมข้อมูลเดิมทั้งหมด',
+          data: {
+            id: existingChannel._id,
+            webhook_url: existingChannel.webhook_url,
+            restored: true
+          }
+        });
+      }
+      
+      // ✅ ถ้า channel เดิมเป็น 'inactive' → ถามว่าจะ restore หรือไม่
+      if (existingChannel.status === 'inactive') {
+        return NextResponse.json({ 
+          success: false, 
+          message: 'Channel ID นี้ถูกปิดใช้งานอยู่ คุณต้องการเปิดใช้งานใหม่หรือไม่?',
+          canRestore: true,
+          existingChannelId: existingChannel._id,
+          existingChannelName: existingChannel.channel_name,
+          existingStatus: 'inactive'
+        }, { status: 409 }); // Conflict
+      }
+      
+      // ✅ ถ้า channel active อยู่แล้ว → error
+      return NextResponse.json({ success: false, message: 'Channel ID นี้มีอยู่แล้วและใช้งานอยู่' }, { status: 400 });
     }
 
     // ดึงข้อมูล Channel จาก LINE API

@@ -25,10 +25,14 @@ export async function GET(
 
     const { id: channelId } = await params;
 
-    // Check if channel exists
-    const channel = await LineChannel.findById(channelId);
+    // ✅ Check if channel exists and is active
+    const channel = await LineChannel.findOne({
+      _id: channelId,
+      status: 'active'  // ✅ เพิ่ม filter
+    });
+    
     if (!channel) {
-      return NextResponse.json({ success: false, message: 'Channel not found' }, { status: 404 });
+      return NextResponse.json({ success: false, message: 'Channel not found or has been deactivated' }, { status: 404 });
     }
 
     const userId = new mongoose.Types.ObjectId(payload.userId);

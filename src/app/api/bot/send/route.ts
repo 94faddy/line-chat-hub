@@ -40,10 +40,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'message is required' }, { status: 400 });
     }
 
-    // Find channel
-    const channel = await LineChannel.findById(channel_id);
+    // ✅ Find channel (เฉพาะ active)
+    const channel = await LineChannel.findOne({
+      _id: channel_id,
+      status: 'active' // ✅ เพิ่ม filter
+    });
+    
     if (!channel) {
-      return NextResponse.json({ error: 'Channel not found' }, { status: 404 });
+      return NextResponse.json({ error: 'Channel not found or has been deactivated' }, { status: 404 });
     }
 
     // Verify user owns this channel

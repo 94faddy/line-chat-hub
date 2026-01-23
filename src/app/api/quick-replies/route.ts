@@ -5,8 +5,13 @@ import { QuickReply, LineChannel, AdminPermission } from '@/models';
 import { verifyToken } from '@/lib/auth';
 import mongoose from 'mongoose';
 
+// ✅ เพิ่ม filter status: 'active' ทุกที่
 async function getAccessibleChannelIds(userId: mongoose.Types.ObjectId): Promise<mongoose.Types.ObjectId[]> {
-  const ownedChannels = await LineChannel.find({ user_id: userId }).select('_id').lean();
+  // ✅ เฉพาะ active channels
+  const ownedChannels = await LineChannel.find({ 
+    user_id: userId,
+    status: 'active' // ✅ เพิ่ม filter
+  }).select('_id').lean();
   const ownedChannelIds = ownedChannels.map(ch => ch._id);
 
   const permissions = await AdminPermission.find({ 
@@ -14,7 +19,18 @@ async function getAccessibleChannelIds(userId: mongoose.Types.ObjectId): Promise
     status: 'active',
     channel_id: { $ne: null }
   }).select('channel_id').lean();
-  const permittedChannelIds = permissions.map(p => p.channel_id!);
+  
+  // ✅ Filter เฉพาะ active channels จาก permissions
+  const permittedChannelIds: mongoose.Types.ObjectId[] = [];
+  for (const p of permissions) {
+    const activeChannel = await LineChannel.findOne({
+      _id: p.channel_id,
+      status: 'active'
+    }).select('_id').lean();
+    if (activeChannel) {
+      permittedChannelIds.push(p.channel_id!);
+    }
+  }
 
   const allChannelPermissions = await AdminPermission.find({
     admin_id: userId,
@@ -23,7 +39,11 @@ async function getAccessibleChannelIds(userId: mongoose.Types.ObjectId): Promise
   }).select('owner_id').lean();
   
   const ownerIds = allChannelPermissions.map(p => p.owner_id);
-  const ownerChannels = await LineChannel.find({ user_id: { $in: ownerIds } }).select('_id').lean();
+  // ✅ เฉพาะ active channels ของ owners
+  const ownerChannels = await LineChannel.find({ 
+    user_id: { $in: ownerIds },
+    status: 'active' // ✅ เพิ่ม filter
+  }).select('_id').lean();
   const ownerChannelIds = ownerChannels.map(ch => ch._id);
 
   const allChannelIds = [...ownedChannelIds, ...permittedChannelIds, ...ownerChannelIds];
@@ -32,8 +52,20 @@ async function getAccessibleChannelIds(userId: mongoose.Types.ObjectId): Promise
   return uniqueIds;
 }
 
+// ✅ เพิ่ม filter status: 'active'
 async function hasChannelAccess(userId: mongoose.Types.ObjectId, channelId: mongoose.Types.ObjectId): Promise<boolean> {
-  const isOwner = await LineChannel.exists({ _id: channelId, user_id: userId });
+  // ✅ ตรวจสอบว่า channel ยัง active อยู่ก่อน
+  const activeChannel = await LineChannel.findOne({
+    _id: channelId,
+    status: 'active'
+  });
+  if (!activeChannel) return false;
+
+  const isOwner = await LineChannel.exists({ 
+    _id: channelId, 
+    user_id: userId,
+    status: 'active' // ✅ เพิ่ม filter
+  });
   if (isOwner) return true;
 
   const hasDirectPermission = await AdminPermission.exists({
@@ -126,7 +158,11 @@ export async function GET(request: NextRequest) {
       .sort({ channel_id: 1, sort_order: 1, created_at: 1 })
       .lean();
 
-    const channels = await LineChannel.find({ _id: { $in: accessibleChannelIds } })
+    // ✅ เฉพาะ active channels
+    const channels = await LineChannel.find({ 
+      _id: { $in: accessibleChannelIds },
+      status: 'active' // ✅ เพิ่ม filter (แม้ว่า accessibleChannelIds จะ filter แล้วก็ตาม)
+    })
       .select('_id channel_name')
       .lean();
     
@@ -179,9 +215,10 @@ export async function POST(request: NextRequest) {
     const userId = new mongoose.Types.ObjectId(payload.userId);
     const channelObjectId = new mongoose.Types.ObjectId(channel_id);
 
+    // ✅ hasChannelAccess จะตรวจสอบ active status แล้ว
     const hasAccess = await hasChannelAccess(userId, channelObjectId);
     if (!hasAccess) {
-      return NextResponse.json({ success: false, message: 'คุณไม่มีสิทธิ์เข้าถึง Channel นี้' }, { status: 403 });
+      return NextResponse.json({ success: false, message: 'คุณไม่มีสิทธิ์เข้าถึง Channel นี้ หรือ Channel ถูกปิดใช้งานแล้ว' }, { status: 403 });
     }
 
     const maxSortOrder = await QuickReply.findOne({ channel_id: channelObjectId })
@@ -250,9 +287,10 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'ไม่พบข้อความตอบกลับ' }, { status: 404 });
     }
 
+    // ✅ hasChannelAccess จะตรวจสอบ active status แล้ว
     const hasAccess = await hasChannelAccess(userId, currentReply.channel_id);
     if (!hasAccess) {
-      return NextResponse.json({ success: false, message: 'คุณไม่มีสิทธิ์แก้ไข' }, { status: 403 });
+      return NextResponse.json({ success: false, message: 'คุณไม่มีสิทธิ์แก้ไข หรือ Channel ถูกปิดใช้งานแล้ว' }, { status: 403 });
     }
 
     let adjacentReply;

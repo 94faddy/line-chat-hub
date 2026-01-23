@@ -9,15 +9,26 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-// ✅ Helper function ตรวจสอบสิทธิ์เข้าถึง Channel
+// ✅ Helper function ตรวจสอบสิทธิ์เข้าถึง Channel (เพิ่ม filter active)
 async function checkChannelAccess(userId: mongoose.Types.ObjectId, channelId: mongoose.Types.ObjectId) {
-  // ตรวจสอบว่าเป็น owner ของ channel หรือไม่
+  // ✅ ตรวจสอบว่าเป็น owner ของ channel ที่ยัง active อยู่
   const channel = await LineChannel.findOne({
     _id: channelId,
     user_id: userId,
+    status: 'active'  // ✅ เพิ่ม filter
   });
   
-  if (channel) return true;
+  if (channel) return { hasAccess: true, isChannelActive: true };
+  
+  // ✅ ตรวจสอบว่า channel ยัง active อยู่ (สำหรับ admin)
+  const channelExists = await LineChannel.findOne({
+    _id: channelId,
+    status: 'active'
+  });
+  
+  if (!channelExists) {
+    return { hasAccess: false, isChannelActive: false };
+  }
   
   // ตรวจสอบว่าเป็น admin ที่ได้รับสิทธิ์หรือไม่
   const permission = await AdminPermission.findOne({
@@ -29,7 +40,7 @@ async function checkChannelAccess(userId: mongoose.Types.ObjectId, channelId: mo
     ]
   });
   
-  return !!permission;
+  return { hasAccess: !!permission, isChannelActive: true };
 }
 
 // GET - ดึงข้อมูล Tag
@@ -56,7 +67,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
 
     // ตรวจสอบสิทธิ์เข้าถึง channel ของ tag นี้
-    const hasAccess = await checkChannelAccess(userId, tag.channel_id);
+    const { hasAccess, isChannelActive } = await checkChannelAccess(userId, tag.channel_id);
+    
+    // ✅ ตรวจสอบว่า channel ยัง active อยู่
+    if (!isChannelActive) {
+      return NextResponse.json({ success: false, message: 'Channel นี้ถูกปิดใช้งานแล้ว' }, { status: 403 });
+    }
+    
     if (!hasAccess) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึง Tag นี้' }, { status: 403 });
     }
@@ -104,7 +121,13 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     }
 
     // ตรวจสอบสิทธิ์เข้าถึง channel ของ tag นี้
-    const hasAccess = await checkChannelAccess(userId, tag.channel_id);
+    const { hasAccess, isChannelActive } = await checkChannelAccess(userId, tag.channel_id);
+    
+    // ✅ ตรวจสอบว่า channel ยัง active อยู่
+    if (!isChannelActive) {
+      return NextResponse.json({ success: false, message: 'Channel นี้ถูกปิดใช้งานแล้ว' }, { status: 403 });
+    }
+    
     if (!hasAccess) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์แก้ไข Tag นี้' }, { status: 403 });
     }
@@ -160,7 +183,13 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     }
 
     // ตรวจสอบสิทธิ์เข้าถึง channel ของ tag นี้
-    const hasAccess = await checkChannelAccess(userId, tag.channel_id);
+    const { hasAccess, isChannelActive } = await checkChannelAccess(userId, tag.channel_id);
+    
+    // ✅ ตรวจสอบว่า channel ยัง active อยู่
+    if (!isChannelActive) {
+      return NextResponse.json({ success: false, message: 'Channel นี้ถูกปิดใช้งานแล้ว' }, { status: 403 });
+    }
+    
     if (!hasAccess) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์ลบ Tag นี้' }, { status: 403 });
     }

@@ -26,8 +26,11 @@ export async function GET(request: NextRequest) {
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    // ดึง channel IDs ที่ user เป็น owner
-    const ownedChannels = await LineChannel.find({ user_id: userId }).select('_id');
+    // ✅ ดึง channel IDs ที่ user เป็น owner (เฉพาะ active)
+    const ownedChannels = await LineChannel.find({ 
+      user_id: userId,
+      status: 'active' // ✅ เพิ่ม filter
+    }).select('_id');
     const ownedChannelIds = ownedChannels.map(ch => ch._id);
 
     // ดึง admin permissions
@@ -41,11 +44,20 @@ export async function GET(request: NextRequest) {
     
     for (const perm of adminPerms) {
       if (perm.channel_id) {
-        // มีสิทธิ์เข้าถึง specific channel
-        accessibleChannelIds.push(perm.channel_id);
+        // ✅ ตรวจสอบว่า channel ยัง active อยู่
+        const channel = await LineChannel.findOne({ 
+          _id: perm.channel_id,
+          status: 'active'
+        }).select('_id');
+        if (channel) {
+          accessibleChannelIds.push(channel._id);
+        }
       } else if (perm.owner_id) {
-        // มีสิทธิ์เข้าถึงทุก channel ของ owner
-        const ownerChannels = await LineChannel.find({ user_id: perm.owner_id }).select('_id');
+        // ✅ มีสิทธิ์เข้าถึงทุก channel ของ owner (เฉพาะ active)
+        const ownerChannels = await LineChannel.find({ 
+          user_id: perm.owner_id,
+          status: 'active' // ✅ เพิ่ม filter
+        }).select('_id');
         accessibleChannelIds.push(...ownerChannels.map(ch => ch._id));
       }
     }
@@ -56,6 +68,19 @@ export async function GET(request: NextRequest) {
     };
 
     if (channelId) {
+      // ✅ ตรวจสอบว่า channel ที่ระบุยัง active อยู่
+      const specifiedChannel = await LineChannel.findOne({
+        _id: new mongoose.Types.ObjectId(channelId),
+        status: 'active'
+      });
+      
+      if (!specifiedChannel) {
+        return NextResponse.json({ 
+          success: false, 
+          message: 'Channel นี้ถูกปิดใช้งานแล้ว' 
+        }, { status: 404 });
+      }
+      
       query.channel_id = new mongoose.Types.ObjectId(channelId);
     }
 

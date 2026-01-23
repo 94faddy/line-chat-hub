@@ -9,18 +9,35 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-async function hasChannelAccess(userId: mongoose.Types.ObjectId, channelId: mongoose.Types.ObjectId): Promise<boolean> {
-  const isOwner = await LineChannel.exists({ _id: channelId, user_id: userId });
-  if (isOwner) return true;
+// ✅ แก้ไข hasChannelAccess - เพิ่ม filter status active
+async function hasChannelAccess(userId: mongoose.Types.ObjectId, channelId: mongoose.Types.ObjectId): Promise<{ hasAccess: boolean; isChannelActive: boolean }> {
+  // ✅ ตรวจสอบว่า channel ยัง active อยู่ก่อน
+  const isOwner = await LineChannel.exists({ 
+    _id: channelId, 
+    user_id: userId,
+    status: 'active'  // ✅ เพิ่ม filter
+  });
+  if (isOwner) return { hasAccess: true, isChannelActive: true };
+
+  // ✅ ตรวจสอบว่า channel active หรือไม่
+  const channelActive = await LineChannel.exists({
+    _id: channelId,
+    status: 'active'
+  });
+  if (!channelActive) return { hasAccess: false, isChannelActive: false };
 
   const hasDirectPermission = await AdminPermission.exists({
     admin_id: userId,
     channel_id: channelId,
     status: 'active'
   });
-  if (hasDirectPermission) return true;
+  if (hasDirectPermission) return { hasAccess: true, isChannelActive: true };
 
-  const channel = await LineChannel.findById(channelId).select('user_id').lean();
+  const channel = await LineChannel.findOne({
+    _id: channelId,
+    status: 'active'
+  }).select('user_id').lean();
+  
   if (channel) {
     const hasAllChannelPermission = await AdminPermission.exists({
       admin_id: userId,
@@ -28,10 +45,10 @@ async function hasChannelAccess(userId: mongoose.Types.ObjectId, channelId: mong
       channel_id: null,
       status: 'active'
     });
-    if (hasAllChannelPermission) return true;
+    if (hasAllChannelPermission) return { hasAccess: true, isChannelActive: true };
   }
 
-  return false;
+  return { hasAccess: false, isChannelActive: true };
 }
 
 function normalizeQuickReply(qr: any) {
@@ -93,7 +110,13 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'ไม่พบข้อความตอบกลับ' }, { status: 404 });
     }
 
-    const hasAccess = await hasChannelAccess(userId, quickReply.channel_id);
+    const { hasAccess, isChannelActive } = await hasChannelAccess(userId, quickReply.channel_id);
+    
+    // ✅ ตรวจสอบว่า channel ยัง active อยู่
+    if (!isChannelActive) {
+      return NextResponse.json({ success: false, message: 'Channel นี้ถูกปิดใช้งานแล้ว' }, { status: 403 });
+    }
+    
     if (!hasAccess) {
       return NextResponse.json({ success: false, message: 'คุณไม่มีสิทธิ์เข้าถึงข้อความตอบกลับนี้' }, { status: 403 });
     }
@@ -137,14 +160,25 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'ไม่พบข้อความตอบกลับ' }, { status: 404 });
     }
 
-    const hasAccess = await hasChannelAccess(userId, quickReply.channel_id);
+    const { hasAccess, isChannelActive } = await hasChannelAccess(userId, quickReply.channel_id);
+    
+    // ✅ ตรวจสอบว่า channel ยัง active อยู่
+    if (!isChannelActive) {
+      return NextResponse.json({ success: false, message: 'Channel นี้ถูกปิดใช้งานแล้ว' }, { status: 403 });
+    }
+    
     if (!hasAccess) {
       return NextResponse.json({ success: false, message: 'คุณไม่มีสิทธิ์แก้ไขข้อความตอบกลับนี้' }, { status: 403 });
     }
 
     if (channel_id && channel_id !== quickReply.channel_id.toString()) {
       const newChannelId = new mongoose.Types.ObjectId(channel_id);
-      const hasNewChannelAccess = await hasChannelAccess(userId, newChannelId);
+      const { hasAccess: hasNewChannelAccess, isChannelActive: isNewChannelActive } = await hasChannelAccess(userId, newChannelId);
+      
+      if (!isNewChannelActive) {
+        return NextResponse.json({ success: false, message: 'Channel ที่เลือกถูกปิดใช้งานแล้ว' }, { status: 403 });
+      }
+      
       if (!hasNewChannelAccess) {
         return NextResponse.json({ success: false, message: 'คุณไม่มีสิทธิ์เข้าถึง Channel ที่เลือก' }, { status: 403 });
       }
@@ -199,7 +233,13 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'ไม่พบข้อความตอบกลับ' }, { status: 404 });
     }
 
-    const hasAccess = await hasChannelAccess(userId, quickReply.channel_id);
+    const { hasAccess, isChannelActive } = await hasChannelAccess(userId, quickReply.channel_id);
+    
+    // ✅ ตรวจสอบว่า channel ยัง active อยู่
+    if (!isChannelActive) {
+      return NextResponse.json({ success: false, message: 'Channel นี้ถูกปิดใช้งานแล้ว' }, { status: 403 });
+    }
+    
     if (!hasAccess) {
       return NextResponse.json({ success: false, message: 'คุณไม่มีสิทธิ์ลบข้อความตอบกลับนี้' }, { status: 403 });
     }

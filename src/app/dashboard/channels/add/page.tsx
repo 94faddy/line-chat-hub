@@ -23,6 +23,41 @@ export default function AddChannelPage() {
     return process.env.NEXT_PUBLIC_APP_URL || 'https://chat.bevchat.pro';
   };
 
+  // ✅ ฟังก์ชัน Restore Channel
+  const handleRestore = async (channelId: string, channelName: string) => {
+    try {
+      const res = await fetch(`/api/channels/${channelId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'restore' }),
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        await Swal.fire({
+          icon: 'success',
+          title: 'กู้คืน Channel สำเร็จ!',
+          text: `Channel "${channelName}" ถูกเปิดใช้งานอีกครั้ง พร้อมข้อมูลเดิมทั้งหมด`,
+          confirmButtonColor: '#06C755',
+        });
+        router.push('/dashboard/channels');
+      } else {
+        Swal.fire({
+          icon: 'error',
+          title: 'เกิดข้อผิดพลาด',
+          text: data.message,
+        });
+      }
+    } catch (error) {
+      Swal.fire({
+        icon: 'error',
+        title: 'เกิดข้อผิดพลาด',
+        text: 'ไม่สามารถกู้คืน Channel ได้',
+      });
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -52,6 +87,35 @@ export default function AddChannelPage() {
         });
         
         router.push('/dashboard/channels');
+      } else if (res.status === 409 && data.canRestore) {
+        // ✅ Handle 409 Conflict - Channel เคยถูกลบไว้
+        const result = await Swal.fire({
+          icon: 'warning',
+          title: 'พบ Channel นี้ในระบบแล้ว',
+          html: `
+            <div class="text-left">
+              <p class="mb-3">Channel ID <strong>${formData.channel_id}</strong> เคยถูกเพิ่มและปิดใช้งานไว้</p>
+              <p class="mb-3">ต้องการกู้คืนและใช้งานต่อหรือไม่?</p>
+              <div class="bg-green-50 p-3 rounded-lg text-sm text-green-800">
+                <p class="font-medium mb-1">✅ หากกู้คืน จะได้ข้อมูลเดิมกลับมาทั้งหมด:</p>
+                <ul class="list-disc ml-4">
+                  <li>ประวัติแชททั้งหมด</li>
+                  <li>รายชื่อผู้ติดตาม</li>
+                  <li>Tags และ Quick Replies</li>
+                  <li>ประวัติ Broadcast</li>
+                </ul>
+              </div>
+            </div>
+          `,
+          showCancelButton: true,
+          confirmButtonText: 'กู้คืน Channel',
+          cancelButtonText: 'ยกเลิก',
+          confirmButtonColor: '#06C755',
+        });
+
+        if (result.isConfirmed) {
+          await handleRestore(data.existingChannelId, data.existingChannelName || formData.channel_name);
+        }
       } else {
         Swal.fire({
           icon: 'error',

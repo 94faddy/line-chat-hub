@@ -5,15 +5,20 @@ import { verifyToken } from '@/lib/auth';
 import mongoose from 'mongoose';
 
 // Helper function ตรวจสอบสิทธิ์เข้าถึง conversation
-async function checkConversationAccess(conversationId: string, userId: string): Promise<boolean> {
+async function checkConversationAccess(conversationId: string, userId: string): Promise<{ hasAccess: boolean; isChannelActive: boolean }> {
   const conversation = await Conversation.findById(conversationId).populate('channel_id');
-  if (!conversation) return false;
+  if (!conversation) return { hasAccess: false, isChannelActive: false };
 
   const channel = conversation.channel_id as any;
   const userObjId = new mongoose.Types.ObjectId(userId);
 
+  // ✅ ตรวจสอบว่า channel ยัง active อยู่
+  if (channel.status !== 'active') {
+    return { hasAccess: false, isChannelActive: false };
+  }
+
   // ตรวจสอบว่าเป็น owner หรือไม่
-  if (channel.user_id.equals(userObjId)) return true;
+  if (channel.user_id.equals(userObjId)) return { hasAccess: true, isChannelActive: true };
 
   // ตรวจสอบ admin permissions
   const adminPerm = await AdminPermission.findOne({
@@ -25,7 +30,7 @@ async function checkConversationAccess(conversationId: string, userId: string): 
     ]
   });
 
-  return !!adminPerm;
+  return { hasAccess: !!adminPerm, isChannelActive: true };
 }
 
 // GET - ดึงข้อความทั้งหมดในการสนทนา
@@ -51,7 +56,13 @@ export async function GET(request: NextRequest) {
     }
 
     // ตรวจสอบสิทธิ์การเข้าถึง
-    const hasAccess = await checkConversationAccess(conversationId, payload.userId);
+    const { hasAccess, isChannelActive } = await checkConversationAccess(conversationId, payload.userId);
+    
+    // ✅ ตรวจสอบว่า channel ยัง active อยู่
+    if (!isChannelActive) {
+      return NextResponse.json({ success: false, message: 'Channel นี้ถูกปิดใช้งานแล้ว' }, { status: 403 });
+    }
+    
     if (!hasAccess) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึงการสนทนานี้' }, { status: 403 });
     }

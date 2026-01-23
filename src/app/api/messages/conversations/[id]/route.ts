@@ -9,15 +9,26 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-// ✅ Helper function ตรวจสอบสิทธิ์เข้าถึง Channel
+// ✅ Helper function ตรวจสอบสิทธิ์เข้าถึง Channel (เพิ่ม filter active)
 async function checkChannelAccess(userId: mongoose.Types.ObjectId, channelId: mongoose.Types.ObjectId) {
-  // ตรวจสอบว่าเป็น owner ของ channel หรือไม่
+  // ✅ ตรวจสอบว่าเป็น owner ของ channel ที่ยัง active อยู่
   const channel = await LineChannel.findOne({
     _id: channelId,
     user_id: userId,
+    status: 'active'  // ✅ เพิ่ม filter
   });
   
-  if (channel) return true;
+  if (channel) return { hasAccess: true, isChannelActive: true };
+  
+  // ✅ ตรวจสอบว่า channel ยัง active อยู่ (สำหรับ admin)
+  const channelExists = await LineChannel.findOne({
+    _id: channelId,
+    status: 'active'
+  });
+  
+  if (!channelExists) {
+    return { hasAccess: false, isChannelActive: false };
+  }
   
   // ตรวจสอบว่าเป็น admin ที่ได้รับสิทธิ์หรือไม่
   const permission = await AdminPermission.findOne({
@@ -29,7 +40,7 @@ async function checkChannelAccess(userId: mongoose.Types.ObjectId, channelId: mo
     ]
   });
   
-  return !!permission;
+  return { hasAccess: !!permission, isChannelActive: true };
 }
 
 // DELETE - ลบการสนทนาและข้อความทั้งหมด
@@ -57,6 +68,11 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
 
     const channel = conversation.channel_id as any;
     const userId = new mongoose.Types.ObjectId(payload.userId);
+
+    // ✅ ตรวจสอบว่า channel ยัง active อยู่
+    if (channel.status !== 'active') {
+      return NextResponse.json({ success: false, message: 'Channel นี้ถูกปิดใช้งานแล้ว' }, { status: 403 });
+    }
 
     // ตรวจสอบสิทธิ์ - เฉพาะ owner เท่านั้นที่ลบได้
     const isOwner = channel.user_id.equals(userId);
@@ -108,14 +124,20 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     const conversation = await Conversation.findById(id)
-      .populate('channel_id', 'channel_name picture_url basic_id')
+      .populate('channel_id', 'channel_name picture_url basic_id status')  // ✅ เพิ่ม status
       .populate('line_user_id', 'line_user_id display_name picture_url source_type group_id room_id member_count members')
       .populate('tags', 'name color')
-      .populate('assigned_to', 'name email avatar') // ✅ เพิ่ม populate assigned_to
+      .populate('assigned_to', 'name email avatar')
       .lean();
 
     if (!conversation) {
       return NextResponse.json({ success: false, message: 'ไม่พบการสนทนา' }, { status: 404 });
+    }
+
+    // ✅ ตรวจสอบว่า channel ยัง active อยู่
+    const channelData = conversation.channel_id as any;
+    if (channelData?.status !== 'active') {
+      return NextResponse.json({ success: false, message: 'Channel นี้ถูกปิดใช้งานแล้ว' }, { status: 403 });
     }
 
     const assignedUser = conversation.assigned_to as any;
@@ -130,7 +152,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
         last_message_preview: conversation.last_message_preview,
         last_message_at: conversation.last_message_at,
         unread_count: conversation.unread_count,
-        notes: conversation.notes, // ✅ เพิ่ม notes
+        notes: conversation.notes,
         channel: {
           id: (conversation.channel_id as any)?._id,
           channel_name: (conversation.channel_id as any)?.channel_name,
@@ -153,7 +175,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
           name: tag.name,
           color: tag.color
         })),
-        // ✅ เพิ่ม assigned_to
         assigned_to: assignedUser ? {
           id: assignedUser._id,
           name: assignedUser.name,
@@ -197,8 +218,13 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     const channel = conversation.channel_id as any;
 
+    // ✅ ตรวจสอบว่า channel ยัง active อยู่
+    if (channel.status !== 'active') {
+      return NextResponse.json({ success: false, message: 'Channel นี้ถูกปิดใช้งานแล้ว' }, { status: 403 });
+    }
+
     // ตรวจสอบสิทธิ์เข้าถึง
-    const hasAccess = await checkChannelAccess(userId, channel._id);
+    const { hasAccess } = await checkChannelAccess(userId, channel._id);
     if (!hasAccess) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์แก้ไขการสนทนานี้' }, { status: 403 });
     }
@@ -219,7 +245,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       } else {
         // ตรวจสอบว่า user ที่จะ assign มีสิทธิ์เข้าถึง channel นี้หรือไม่
         const assigneeId = new mongoose.Types.ObjectId(assigned_to);
-        const assigneeHasAccess = await checkChannelAccess(assigneeId, channel._id);
+        const { hasAccess: assigneeHasAccess } = await checkChannelAccess(assigneeId, channel._id);
         
         if (!assigneeHasAccess) {
           return NextResponse.json({ 

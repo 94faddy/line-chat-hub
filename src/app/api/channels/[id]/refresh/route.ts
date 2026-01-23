@@ -52,9 +52,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    const channel = await LineChannel.findById(id);
+    // ✅ เพิ่ม filter status active
+    const channel = await LineChannel.findOne({
+      _id: id,
+      status: 'active'
+    });
+    
     if (!channel) {
-      return NextResponse.json({ success: false, message: 'ไม่พบ Channel' }, { status: 404 });
+      return NextResponse.json({ success: false, message: 'ไม่พบ Channel หรือ Channel ถูกปิดใช้งานแล้ว' }, { status: 404 });
     }
 
     // ตรวจสอบสิทธิ์

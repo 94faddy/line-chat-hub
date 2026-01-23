@@ -35,10 +35,15 @@ export async function GET(request: NextRequest) {
         startDate = null;
     }
 
-    // Get user's channels (owned + admin access)
-    const ownedChannels = await LineChannel.find({ user_id: user.id }).select('_id');
+    // ✅ Get user's channels (owned + admin access) - เฉพาะ active
+    const ownedChannels = await LineChannel.find({ 
+      user_id: user.id,
+      status: 'active' // ✅ เพิ่ม filter
+    }).select('_id');
+    
     const adminPermissions = await AdminPermission.find({ 
       admin_id: user.id,
+      status: 'active', // ✅ เพิ่ม filter
       $or: [
         { channel_id: { $ne: null } },
         { owner_id: { $ne: null } }
@@ -50,10 +55,20 @@ export async function GET(request: NextRequest) {
     
     for (const perm of adminPermissions) {
       if (perm.channel_id) {
-        channelIds.push(perm.channel_id);
+        // ✅ ตรวจสอบว่า channel ยัง active อยู่
+        const channel = await LineChannel.findOne({ 
+          _id: perm.channel_id,
+          status: 'active'
+        }).select('_id');
+        if (channel) {
+          channelIds.push(channel._id);
+        }
       } else if (perm.owner_id) {
-        // Get all channels owned by this owner
-        const ownerChannels = await LineChannel.find({ user_id: perm.owner_id }).select('_id');
+        // ✅ Get all active channels owned by this owner
+        const ownerChannels = await LineChannel.find({ 
+          user_id: perm.owner_id,
+          status: 'active' // ✅ เพิ่ม filter
+        }).select('_id');
         channelIds.push(...ownerChannels.map(c => c._id));
       }
     }

@@ -101,10 +101,13 @@ export async function POST(request: NextRequest) {
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    // ตรวจสอบสิทธิ์เข้าถึง channel
-    const channel = await LineChannel.findById(channel_id);
+    // ✅ ตรวจสอบสิทธิ์เข้าถึง channel (เฉพาะ active)
+    const channel = await LineChannel.findOne({
+      _id: channel_id,
+      status: 'active' // ✅ เพิ่ม filter
+    });
     if (!channel) {
-      return NextResponse.json({ success: false, message: 'ไม่พบ Channel' }, { status: 404 });
+      return NextResponse.json({ success: false, message: 'ไม่พบ Channel หรือ Channel ถูกปิดใช้งานแล้ว' }, { status: 404 });
     }
 
     const isOwner = channel.user_id.equals(userId);

@@ -40,6 +40,14 @@ export async function POST(request: NextRequest) {
     const channel = conversation.channel_id as any;
     const lineUser = conversation.line_user_id as any;
 
+    // ✅ ตรวจสอบว่า channel ยัง active อยู่
+    if (channel.status !== 'active') {
+      return NextResponse.json({ 
+        success: false, 
+        message: 'Channel นี้ถูกปิดใช้งานแล้ว ไม่สามารถส่งข้อความได้' 
+      }, { status: 403 });
+    }
+
     // ตรวจสอบสิทธิ์
     const userId = new mongoose.Types.ObjectId(payload.userId);
     const isOwner = channel.user_id.equals(userId);

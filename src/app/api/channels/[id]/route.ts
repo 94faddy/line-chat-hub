@@ -141,7 +141,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// DELETE - ลบ Channel (เฉพาะ owner เท่านั้น)
+// DELETE - Soft Delete Channel (เปลี่ยน status เป็น inactive แทนการลบจริง)
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
@@ -169,11 +169,85 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'เฉพาะเจ้าของเท่านั้นที่สามารถลบได้' }, { status: 403 });
     }
 
-    await LineChannel.findByIdAndDelete(id);
+    // ✅ Soft Delete - เปลี่ยน status เป็น inactive แทนการลบจริง
+    await LineChannel.findByIdAndUpdate(id, { 
+      status: 'inactive',
+      deleted_at: new Date() // บันทึกเวลาที่ลบ
+    });
 
-    return NextResponse.json({ success: true, message: 'ลบ Channel สำเร็จ' });
+    return NextResponse.json({ 
+      success: true, 
+      message: 'ปิดใช้งาน Channel สำเร็จ (ข้อมูลยังคงอยู่ในระบบ)' 
+    });
   } catch (error) {
     console.error('Delete channel error:', error);
+    return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
+  }
+}
+
+// PATCH - Restore / Hard Delete Channel
+export async function PATCH(request: NextRequest, { params }: RouteParams) {
+  try {
+    await connectDB();
+    
+    const token = request.cookies.get('auth_token')?.value;
+    if (!token) {
+      return NextResponse.json({ success: false, message: 'ไม่ได้เข้าสู่ระบบ' }, { status: 401 });
+    }
+
+    const payload = verifyToken(token);
+    if (!payload) {
+      return NextResponse.json({ success: false, message: 'Token ไม่ถูกต้อง' }, { status: 401 });
+    }
+
+    const { id } = await params;
+    const body = await request.json();
+    const { action } = body;
+
+    const userId = new mongoose.Types.ObjectId(payload.userId);
+
+    const channel = await LineChannel.findById(id);
+    if (!channel) {
+      return NextResponse.json({ success: false, message: 'ไม่พบ Channel' }, { status: 404 });
+    }
+
+    // ตรวจสอบว่าเป็น owner เท่านั้น
+    if (!channel.user_id.equals(userId)) {
+      return NextResponse.json({ success: false, message: 'เฉพาะเจ้าของเท่านั้นที่สามารถดำเนินการได้' }, { status: 403 });
+    }
+
+    // ✅ Restore - เปิดใช้งาน Channel ที่ถูก soft delete
+    if (action === 'restore') {
+      await LineChannel.findByIdAndUpdate(id, { 
+        status: 'active',
+        $unset: { deleted_at: 1 } // ลบ field deleted_at
+      });
+
+      return NextResponse.json({ 
+        success: true, 
+        message: 'เปิดใช้งาน Channel สำเร็จ' 
+      });
+    }
+
+    // ✅ Hard Delete - ลบถาวร (เปลี่ยน status เป็น 'deleted' + ลบ credentials)
+    if (action === 'hard_delete') {
+      await LineChannel.findByIdAndUpdate(id, { 
+        status: 'deleted',
+        deleted_at: new Date(),
+        // ลบ credentials เพื่อความปลอดภัย (ใช้ empty string แทน null เพื่อไม่ให้ error)
+        channel_secret: '',
+        channel_access_token: ''
+      });
+
+      return NextResponse.json({ 
+        success: true, 
+        message: 'ลบ Channel สำเร็จ (สามารถเพิ่มใหม่เพื่อกู้คืนข้อมูลได้)' 
+      });
+    }
+
+    return NextResponse.json({ success: false, message: 'Invalid action' }, { status: 400 });
+  } catch (error) {
+    console.error('Patch channel error:', error);
     return NextResponse.json({ success: false, message: 'เกิดข้อผิดพลาด' }, { status: 500 });
   }
 }

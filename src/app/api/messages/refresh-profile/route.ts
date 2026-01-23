@@ -33,10 +33,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ success: false, message: 'ไม่พบผู้ใช้' }, { status: 404 });
     }
 
-    // หา Channel
-    const channel = await LineChannel.findById(lineUser.channel_id);
+    // หา Channel - ✅ เพิ่ม filter status active
+    const channel = await LineChannel.findOne({
+      _id: lineUser.channel_id,
+      status: 'active'  // ✅ เพิ่ม filter
+    });
     if (!channel) {
-      return NextResponse.json({ success: false, message: 'ไม่พบ Channel' }, { status: 404 });
+      return NextResponse.json({ success: false, message: 'ไม่พบ Channel หรือ Channel ถูกปิดใช้งานแล้ว' }, { status: 404 });
     }
 
     const userId = new mongoose.Types.ObjectId(payload.userId);

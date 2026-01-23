@@ -21,8 +21,11 @@ export async function GET(request: NextRequest) {
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    // ดึง channel IDs ที่มีสิทธิ์เข้าถึง
-    const ownedChannels = await LineChannel.find({ user_id: userId }).select('_id');
+    // ✅ ดึง channel IDs ที่มีสิทธิ์เข้าถึง (เฉพาะ active)
+    const ownedChannels = await LineChannel.find({ 
+      user_id: userId,
+      status: 'active' // ✅ เพิ่ม filter
+    }).select('_id');
     const ownedChannelIds = ownedChannels.map(ch => ch._id);
 
     const broadcasts = await Broadcast.find({
@@ -80,10 +83,18 @@ export async function POST(request: NextRequest) {
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    // ตรวจสอบว่า channel เป็นของ user หรือไม่
-    const channel = await LineChannel.findOne({ _id: channel_id, user_id: userId });
+    // ✅ ตรวจสอบว่า channel เป็นของ user และยัง active อยู่
+    const channel = await LineChannel.findOne({ 
+      _id: channel_id, 
+      user_id: userId,
+      status: 'active' // ✅ เพิ่ม filter
+    });
+    
     if (!channel) {
-      return NextResponse.json({ success: false, message: 'ไม่พบ Channel หรือไม่มีสิทธิ์' }, { status: 404 });
+      return NextResponse.json({ 
+        success: false, 
+        message: 'ไม่พบ Channel, Channel ถูกปิดใช้งาน หรือไม่มีสิทธิ์' 
+      }, { status: 404 });
     }
 
     // นับจำนวน users

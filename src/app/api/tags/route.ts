@@ -5,15 +5,24 @@ import { Tag, LineChannel, AdminPermission } from '@/models';
 import { verifyToken } from '@/lib/auth';
 import mongoose from 'mongoose';
 
-// ✅ Helper function ตรวจสอบสิทธิ์เข้าถึง Channel
+// ✅ Helper function ตรวจสอบสิทธิ์เข้าถึง Channel (เฉพาะ active)
 async function checkChannelAccess(userId: mongoose.Types.ObjectId, channelId: mongoose.Types.ObjectId) {
-  // ตรวจสอบว่าเป็น owner ของ channel หรือไม่
+  // ตรวจสอบว่าเป็น owner ของ channel หรือไม่ (✅ เฉพาะ active)
   const channel = await LineChannel.findOne({
     _id: channelId,
     user_id: userId,
+    status: 'active' // ✅ เพิ่ม filter
   });
   
   if (channel) return true;
+  
+  // ✅ ตรวจสอบว่า channel ยัง active อยู่ก่อนตรวจสอบ admin permission
+  const activeChannel = await LineChannel.findOne({
+    _id: channelId,
+    status: 'active'
+  });
+  
+  if (!activeChannel) return false;
   
   // ตรวจสอบว่าเป็น admin ที่ได้รับสิทธิ์หรือไม่
   const permission = await AdminPermission.findOne({
@@ -28,10 +37,13 @@ async function checkChannelAccess(userId: mongoose.Types.ObjectId, channelId: mo
   return !!permission;
 }
 
-// ✅ Helper function ดึง channels ที่ user มีสิทธิ์เข้าถึง
+// ✅ Helper function ดึง channels ที่ user มีสิทธิ์เข้าถึง (เฉพาะ active)
 async function getAccessibleChannels(userId: mongoose.Types.ObjectId) {
-  // 1. Channels ที่เป็น owner
-  const ownedChannels = await LineChannel.find({ user_id: userId }).select('_id').lean();
+  // 1. Channels ที่เป็น owner (✅ เฉพาะ active)
+  const ownedChannels = await LineChannel.find({ 
+    user_id: userId,
+    status: 'active' // ✅ เพิ่ม filter
+  }).select('_id').lean();
   const channelIds = ownedChannels.map(c => c._id);
   
   // 2. Channels ที่ได้รับสิทธิ์เป็น admin
@@ -42,13 +54,21 @@ async function getAccessibleChannels(userId: mongoose.Types.ObjectId) {
   
   for (const perm of permissions) {
     if (perm.channel_id) {
-      // มีสิทธิ์เฉพาะ channel นี้
-      if (!channelIds.some(id => id.equals(perm.channel_id!))) {
+      // ✅ ตรวจสอบว่า channel ยัง active อยู่
+      const activeChannel = await LineChannel.findOne({
+        _id: perm.channel_id,
+        status: 'active'
+      }).select('_id').lean();
+      
+      if (activeChannel && !channelIds.some(id => id.equals(perm.channel_id!))) {
         channelIds.push(perm.channel_id);
       }
     } else {
-      // channel_id = null หมายถึงมีสิทธิ์ทุก channel ของ owner
-      const ownerChannels = await LineChannel.find({ user_id: perm.owner_id }).select('_id').lean();
+      // channel_id = null หมายถึงมีสิทธิ์ทุก channel ของ owner (✅ เฉพาะ active)
+      const ownerChannels = await LineChannel.find({ 
+        user_id: perm.owner_id,
+        status: 'active' // ✅ เพิ่ม filter
+      }).select('_id').lean();
       for (const ch of ownerChannels) {
         if (!channelIds.some(id => id.equals(ch._id))) {
           channelIds.push(ch._id);
@@ -88,7 +108,7 @@ export async function GET(request: NextRequest) {
       // ตรวจสอบสิทธิ์
       const hasAccess = await checkChannelAccess(userId, channelId);
       if (!hasAccess) {
-        return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึง Channel นี้' }, { status: 403 });
+        return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึง Channel นี้ หรือ Channel ถูกปิดใช้งานแล้ว' }, { status: 403 });
       }
       
       query.channel_id = channelId;
@@ -145,10 +165,10 @@ export async function POST(request: NextRequest) {
     const userId = new mongoose.Types.ObjectId(payload.userId);
     const channelId = new mongoose.Types.ObjectId(channel_id);
 
-    // ตรวจสอบสิทธิ์เข้าถึง Channel
+    // ตรวจสอบสิทธิ์เข้าถึง Channel (✅ รวม active check)
     const hasAccess = await checkChannelAccess(userId, channelId);
     if (!hasAccess) {
-      return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึง Channel นี้' }, { status: 403 });
+      return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์เข้าถึง Channel นี้ หรือ Channel ถูกปิดใช้งานแล้ว' }, { status: 403 });
     }
 
     // ตรวจสอบว่าชื่อซ้ำหรือไม่ (ในแต่ละ channel)

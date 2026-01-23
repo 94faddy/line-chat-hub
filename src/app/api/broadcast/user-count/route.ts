@@ -28,10 +28,14 @@ export async function GET(request: NextRequest) {
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
-    // ตรวจสอบสิทธิ์เข้าถึง channel
-    const channel = await LineChannel.findById(channelId);
+    // ✅ ตรวจสอบสิทธิ์เข้าถึง channel (เฉพาะ active)
+    const channel = await LineChannel.findOne({
+      _id: channelId,
+      status: 'active' // ✅ เพิ่ม filter
+    });
+    
     if (!channel) {
-      return NextResponse.json({ success: false, message: 'ไม่พบ Channel' }, { status: 404 });
+      return NextResponse.json({ success: false, message: 'ไม่พบ Channel หรือ Channel ถูกปิดใช้งานแล้ว' }, { status: 404 });
     }
 
     const isOwner = channel.user_id.equals(userId);
@@ -54,10 +58,13 @@ export async function GET(request: NextRequest) {
     // นับจำนวน users ที่:
     // 1. เป็น source_type = 'user' (ไม่ใช่ group/room)
     // 2. follow_status != 'unfollowed' และ != 'blocked'
+    // ✅ 3. is_spam != true และ is_blocked != true
     const count = await LineUser.countDocuments({
       channel_id: new mongoose.Types.ObjectId(channelId),
       source_type: 'user',
-      follow_status: { $nin: ['unfollowed', 'blocked'] }
+      follow_status: { $nin: ['unfollowed', 'blocked'] },
+      is_spam: { $ne: true },     // ✅ เพิ่ม filter
+      is_blocked: { $ne: true }   // ✅ เพิ่ม filter
     });
 
     return NextResponse.json({ 

@@ -27,7 +27,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     const { id } = await params;
 
     const broadcast = await Broadcast.findById(id)
-      .populate('channel_id', 'channel_name')
+      .populate('channel_id', 'channel_name status')  // ✅ เพิ่ม status
       .lean();
 
     if (!broadcast) {
@@ -82,6 +82,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
 
     const channel = broadcast.channel_id as any;
 
+    // ✅ ตรวจสอบว่า channel ยัง active อยู่
+    if (channel.status !== 'active') {
+      return NextResponse.json({ 
+        success: false, 
+        message: 'Channel นี้ถูกปิดใช้งานแล้ว ไม่สามารถส่ง Broadcast ได้' 
+      }, { status: 403 });
+    }
+
     // ตรวจสอบว่าเป็น owner หรือไม่
     if (!channel.user_id.equals(userId)) {
       return NextResponse.json({ success: false, message: 'ไม่มีสิทธิ์' }, { status: 403 });
@@ -90,10 +98,13 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
     // อัพเดทสถานะเป็น sending
     await Broadcast.findByIdAndUpdate(id, { status: 'sending' });
 
-    // ดึง users ที่ต้องส่ง
+    // ดึง users ที่ต้องส่ง - ✅ เพิ่ม filter spam และ blocked
     const users = await LineUser.find({
       channel_id: channel._id,
-      is_blocked: false
+      source_type: 'user',
+      follow_status: { $nin: ['unfollowed', 'blocked'] },
+      is_spam: { $ne: true },
+      is_blocked: { $ne: true }
     }).select('line_user_id');
 
     let sentCount = 0;

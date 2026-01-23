@@ -33,15 +33,16 @@ export async function POST(request: NextRequest) {
     const can_manage_tags = permissions?.can_manage_tags ?? body.can_manage_tags ?? false;
     const can_manage_channel = permissions?.can_manage_channel ?? body.can_manage_channel ?? false;
 
-    // ถ้าระบุ channel_id ให้ตรวจสอบว่าเป็นเจ้าของหรือไม่
+    // ✅ ถ้าระบุ channel_id ให้ตรวจสอบว่าเป็นเจ้าของและ channel ยัง active อยู่
     if (channel_id) {
       const channel = await LineChannel.findOne({
         _id: channel_id,
         user_id: payload.userId,
+        status: 'active'  // ✅ เพิ่ม filter
       });
       
       if (!channel) {
-        return NextResponse.json({ success: false, message: 'ไม่พบ Channel หรือไม่ใช่เจ้าของ' }, { status: 404 });
+        return NextResponse.json({ success: false, message: 'ไม่พบ Channel, ไม่ใช่เจ้าของ, หรือ Channel ถูกปิดใช้งานแล้ว' }, { status: 404 });
       }
     }
 
