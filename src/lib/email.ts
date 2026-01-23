@@ -8,6 +8,14 @@ const transporter = nodemailer.createTransport({
     user: process.env.SMTP_USER,
     pass: process.env.SMTP_PASS,
   },
+  // ✅ เพิ่ม timeout settings
+  connectionTimeout: 30000, // 30 วินาที
+  greetingTimeout: 30000,   // 30 วินาที
+  socketTimeout: 60000,     // 60 วินาที
+  // ✅ เพิ่ม TLS options
+  tls: {
+    rejectUnauthorized: false // ยอมรับ self-signed certificate
+  }
 });
 
 const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME || 'BevChat Hub';
