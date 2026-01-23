@@ -1,3 +1,4 @@
+// src/app/api/quick-replies/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { connectDB } from '@/lib/mongodb';
 import { QuickReply, LineChannel, AdminPermission } from '@/models';
@@ -8,13 +9,10 @@ interface RouteParams {
   params: Promise<{ id: string }>;
 }
 
-// Helper: ตรวจสอบว่า user มีสิทธิ์เข้าถึง channel หรือไม่
 async function hasChannelAccess(userId: mongoose.Types.ObjectId, channelId: mongoose.Types.ObjectId): Promise<boolean> {
-  // 1. เป็น owner ของ channel
   const isOwner = await LineChannel.exists({ _id: channelId, user_id: userId });
   if (isOwner) return true;
 
-  // 2. ถูก invite เข้า channel นี้โดยเฉพาะ
   const hasDirectPermission = await AdminPermission.exists({
     admin_id: userId,
     channel_id: channelId,
@@ -22,7 +20,6 @@ async function hasChannelAccess(userId: mongoose.Types.ObjectId, channelId: mong
   });
   if (hasDirectPermission) return true;
 
-  // 3. ถูก invite แบบ "ทุก channel" ของ owner
   const channel = await LineChannel.findById(channelId).select('user_id').lean();
   if (channel) {
     const hasAllChannelPermission = await AdminPermission.exists({
@@ -37,7 +34,43 @@ async function hasChannelAccess(userId: mongoose.Types.ObjectId, channelId: mong
   return false;
 }
 
-// GET - ดึงข้อมูล Quick Reply และเพิ่ม use_count
+function normalizeQuickReply(qr: any) {
+  if (qr.messages && qr.messages.length > 0) {
+    return {
+      id: qr._id,
+      title: qr.title,
+      shortcut: qr.shortcut,
+      messages: qr.messages,
+      channel_id: qr.channel_id,
+      is_active: qr.is_active,
+      use_count: qr.use_count,
+      sort_order: qr.sort_order || 0
+    };
+  }
+  
+  const legacyMessage = {
+    type: qr.message_type || 'text',
+    content: qr.content || '',
+    flex_content: qr.flex_content || null,
+    media_url: qr.media_url || null
+  };
+  
+  return {
+    id: qr._id,
+    title: qr.title,
+    shortcut: qr.shortcut,
+    messages: [legacyMessage],
+    message_type: qr.message_type,
+    content: qr.content,
+    flex_content: qr.flex_content,
+    media_url: qr.media_url,
+    channel_id: qr.channel_id,
+    is_active: qr.is_active,
+    use_count: qr.use_count,
+    sort_order: qr.sort_order || 0
+  };
+}
+
 export async function GET(request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
@@ -60,27 +93,18 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'ไม่พบข้อความตอบกลับ' }, { status: 404 });
     }
 
-    // ตรวจสอบสิทธิ์เข้าถึง channel
     const hasAccess = await hasChannelAccess(userId, quickReply.channel_id);
     if (!hasAccess) {
       return NextResponse.json({ success: false, message: 'คุณไม่มีสิทธิ์เข้าถึงข้อความตอบกลับนี้' }, { status: 403 });
     }
 
-    // เพิ่ม use_count
     await QuickReply.findByIdAndUpdate(id, { $inc: { use_count: 1 } });
+
+    const normalized = normalizeQuickReply(quickReply);
 
     return NextResponse.json({
       success: true,
-      data: {
-        id: quickReply._id,
-        title: quickReply.title,
-        shortcut: quickReply.shortcut,
-        message_type: quickReply.message_type,
-        content: quickReply.content,
-        flex_content: quickReply.flex_content,
-        media_url: quickReply.media_url,
-        channel_id: quickReply.channel_id
-      }
+      data: normalized
     });
   } catch (error) {
     console.error('Get quick reply error:', error);
@@ -88,7 +112,6 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// PUT - อัพเดท Quick Reply
 export async function PUT(request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
@@ -105,7 +128,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
 
     const { id } = await params;
     const body = await request.json();
-    const { title, shortcut, message_type, content, flex_content, media_url, channel_id } = body;
+    const { title, shortcut, messages, channel_id } = body;
 
     const userId = new mongoose.Types.ObjectId(payload.userId);
 
@@ -114,13 +137,11 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'ไม่พบข้อความตอบกลับ' }, { status: 404 });
     }
 
-    // ตรวจสอบสิทธิ์เข้าถึง channel ปัจจุบัน
     const hasAccess = await hasChannelAccess(userId, quickReply.channel_id);
     if (!hasAccess) {
       return NextResponse.json({ success: false, message: 'คุณไม่มีสิทธิ์แก้ไขข้อความตอบกลับนี้' }, { status: 403 });
     }
 
-    // ถ้าเปลี่ยน channel ต้องตรวจสอบสิทธิ์ channel ใหม่ด้วย
     if (channel_id && channel_id !== quickReply.channel_id.toString()) {
       const newChannelId = new mongoose.Types.ObjectId(channel_id);
       const hasNewChannelAccess = await hasChannelAccess(userId, newChannelId);
@@ -129,17 +150,25 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    // อัพเดท
-    const updateData: any = {};
-    if (title) updateData.title = title;
-    if (shortcut !== undefined) updateData.shortcut = shortcut;
-    if (message_type) updateData.message_type = message_type;
-    if (content) updateData.content = content;
-    if (flex_content !== undefined) updateData.flex_content = flex_content;
-    if (media_url !== undefined) updateData.media_url = media_url;
-    if (channel_id) updateData.channel_id = new mongoose.Types.ObjectId(channel_id);
+    // สร้าง update operation
+    const updateOps: any = { $set: {} };
 
-    await QuickReply.findByIdAndUpdate(id, updateData);
+    if (title) updateOps.$set.title = title;
+    if (shortcut !== undefined) updateOps.$set.shortcut = shortcut || null;
+    if (channel_id) updateOps.$set.channel_id = new mongoose.Types.ObjectId(channel_id);
+    
+    if (messages && messages.length > 0) {
+      updateOps.$set.messages = messages;
+      // ลบ legacy fields
+      updateOps.$unset = {
+        message_type: 1,
+        content: 1,
+        flex_content: 1,
+        media_url: 1
+      };
+    }
+
+    await QuickReply.findByIdAndUpdate(id, updateOps);
 
     return NextResponse.json({ success: true, message: 'อัพเดทข้อความตอบกลับสำเร็จ' });
   } catch (error) {
@@ -148,7 +177,6 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
   }
 }
 
-// DELETE - ลบ Quick Reply
 export async function DELETE(request: NextRequest, { params }: RouteParams) {
   try {
     await connectDB();
@@ -171,7 +199,6 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
       return NextResponse.json({ success: false, message: 'ไม่พบข้อความตอบกลับ' }, { status: 404 });
     }
 
-    // ตรวจสอบสิทธิ์เข้าถึง channel
     const hasAccess = await hasChannelAccess(userId, quickReply.channel_id);
     if (!hasAccess) {
       return NextResponse.json({ success: false, message: 'คุณไม่มีสิทธิ์ลบข้อความตอบกลับนี้' }, { status: 403 });

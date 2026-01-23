@@ -40,12 +40,21 @@ interface Tag {
   color: string;
 }
 
+interface MessageBox {
+  type: 'text' | 'image' | 'flex';
+  content: string;
+  flex_content?: any;
+  media_url?: string;
+}
+
 interface QuickReply {
   id: string;
   title: string;
   shortcut?: string;
-  message_type: string;
-  content: string;
+  messages?: MessageBox[];
+  // Legacy fields
+  message_type?: string;
+  content?: string;
   flex_content?: any;
   media_url?: string;
   channel_id?: string;
@@ -1321,7 +1330,7 @@ export default function InboxPage() {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newMessage.trim() || !selectedConversation) return;
+    if (!(newMessage || '').trim() || !selectedConversation) return;
 
     setSendingMessage(true);
     try {
@@ -1799,58 +1808,118 @@ export default function InboxPage() {
     setShowQuickReplies(false);
     setShowShortcutDropdown(false);
     
-    // ถ้าเป็น flex message → เก็บไว้รอส่ง (ไม่ส่งทันที)
-    if (reply.message_type === 'flex' && reply.flex_content) {
+    // ถ้ามี messages array (format ใหม่)
+    const messages = reply.messages || [];
+    
+    if (messages.length > 0) {
+      // มีหลาย message หรือมี flex/image → เก็บไว้รอส่งพร้อมกัน
+      const hasNonText = messages.some(m => m.type === 'flex' || m.type === 'image');
+      const hasMultiple = messages.length > 1;
+      
+      if (hasNonText || hasMultiple) {
+        setPendingFlexReply(reply);
+        setNewMessage('');
+      } else {
+        // แค่ text เดียว → ใส่ใน textarea
+        setNewMessage(messages[0].content || '');
+        setPendingFlexReply(null);
+        inputRef.current?.focus();
+      }
+    } else if (reply.message_type === 'flex' && reply.flex_content) {
+      // Legacy: flex message
       setPendingFlexReply(reply);
-      // Clear text message ถ้ามี
       setNewMessage('');
     } else {
-      // ถ้าเป็นข้อความธรรมดา ให้ใส่ใน textarea
-      setNewMessage(reply.content);
-      // Clear pending flex ถ้ามี
+      // Legacy: text message
+      setNewMessage(reply.content || '');
       setPendingFlexReply(null);
       inputRef.current?.focus();
     }
   };
 
-  // ✅ ส่ง Pending Flex Reply
+  // ✅ ส่ง Pending Flex Reply (รองรับหลายข้อความ)
   const sendPendingFlexReply = async () => {
-    if (!pendingFlexReply || !selectedConversation) return;
+    // ป้องกันกดซ้ำ
+    if (!pendingFlexReply || !selectedConversation || sendingMessage) return;
+    
+    // เก็บ reply ไว้ก่อน แล้ว clear pending ทันที (ป้องกันกดซ้ำ)
+    const replyToSend = pendingFlexReply;
+    setPendingFlexReply(null);
     
     setSendingMessage(true);
     try {
-      const res = await fetch('/api/messages/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          conversation_id: selectedConversation.id,
-          message_type: 'flex',
-          content: pendingFlexReply.content,
-          flex_content: pendingFlexReply.flex_content,
-          alt_text: pendingFlexReply.content
-        }),
-      });
-
-      const data = await res.json();
-      if (data.success) {
-        // เพิ่ม use_count
-        fetch(`/api/quick-replies/${pendingFlexReply.id}`, { method: 'GET' });
+      const messages = replyToSend.messages || [];
+      
+      if (messages.length > 0) {
+        // ส่งทีละ message ตามลำดับ
+        for (const msg of messages) {
+          const payload: any = {
+            conversation_id: selectedConversation.id,
+            message_type: msg.type,
+            content: msg.content,
+          };
+          
+          if (msg.type === 'flex' && msg.flex_content) {
+            payload.flex_content = msg.flex_content;
+            payload.alt_text = msg.content;
+          }
+          
+          if (msg.type === 'image' && msg.media_url) {
+            payload.media_url = msg.media_url;
+          }
+          
+          const res = await fetch('/api/messages/send', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          
+          const data = await res.json();
+          if (!data.success) {
+            throw new Error(data.message || 'ส่งข้อความไม่สำเร็จ');
+          }
+          
+          // รอเล็กน้อยระหว่างแต่ละข้อความ (ป้องกัน rate limit)
+          if (messages.indexOf(msg) < messages.length - 1) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+        
+        // สำเร็จ - เพิ่ม use_count
+        fetch(`/api/quick-replies/${replyToSend.id}`, { method: 'GET' });
         fetchMessages(selectedConversation.id);
         fetchConversations();
-        setPendingFlexReply(null);
         setTimeout(() => scrollToBottom('smooth'), 150);
+        
       } else {
-        Swal.fire({
-          icon: 'error',
-          title: 'ส่ง Flex Message ไม่สำเร็จ',
-          text: data.message || 'เกิดข้อผิดพลาด',
+        // Legacy format
+        const res = await fetch('/api/messages/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: selectedConversation.id,
+            message_type: 'flex',
+            content: replyToSend.content,
+            flex_content: replyToSend.flex_content,
+            alt_text: replyToSend.content
+          }),
         });
+
+        const data = await res.json();
+        if (data.success) {
+          fetch(`/api/quick-replies/${replyToSend.id}`, { method: 'GET' });
+          fetchMessages(selectedConversation.id);
+          fetchConversations();
+          setTimeout(() => scrollToBottom('smooth'), 150);
+        } else {
+          throw new Error(data.message || 'เกิดข้อผิดพลาด');
+        }
       }
-    } catch (error) {
+    } catch (error: any) {
       Swal.fire({
         icon: 'error',
-        title: 'เกิดข้อผิดพลาด',
-        text: 'ไม่สามารถส่ง Flex Message ได้',
+        title: 'ส่งข้อความไม่สำเร็จ',
+        text: error.message || 'ไม่สามารถส่งข้อความได้',
       });
     } finally {
       setSendingMessage(false);
@@ -1905,6 +1974,9 @@ export default function InboxPage() {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       
+      // ป้องกันกดซ้ำขณะกำลังส่ง
+      if (sendingMessage || isUploading) return;
+      
       // ถ้ามี pending flex → ส่ง flex
       if (pendingFlexReply) {
         sendPendingFlexReply();
@@ -1919,7 +1991,7 @@ export default function InboxPage() {
             await handleUploadAndSend();
           }
           // ส่งข้อความ (ถ้ามี)
-          if (newMessage.trim()) {
+          if ((newMessage || '').trim()) {
             handleSendMessage(e as any);
           }
         })();
@@ -2749,14 +2821,14 @@ export default function InboxPage() {
              selectedConversation.line_user?.follow_status !== 'blocked' ? (
             <form onSubmit={handleSendMessage} className={`bg-white ${!showQuickReplies ? 'border-t border-gray-200' : ''} p-4`}>
               
-              {/* ✅ Pending Flex Message Preview */}
+              {/* ✅ Pending Quick Reply Preview - แสดงทุก box */}
               {pendingFlexReply && (
-                <div className="mb-3 p-3 bg-purple-50 rounded-lg border border-purple-200">
+                <div className="mb-3 p-3 bg-green-50 rounded-lg border border-green-200">
                   <div className="flex items-center justify-between mb-2">
                     <div className="flex items-center gap-2">
-                      <FiCode className="w-4 h-4 text-purple-600" />
-                      <span className="text-sm font-medium text-purple-700">
-                        Flex Message: {pendingFlexReply.title}
+                      <FiZap className="w-4 h-4 text-green-600" />
+                      <span className="text-sm font-medium text-green-700">
+                        {pendingFlexReply.title}
                       </span>
                     </div>
                     <button
@@ -2768,8 +2840,23 @@ export default function InboxPage() {
                       ยกเลิก
                     </button>
                   </div>
-                  <p className="text-xs text-purple-600">
-                    กดปุ่ม "ส่ง" หรือ Enter เพื่อส่ง Flex Message
+                  {/* แสดงรายการ box ทั้งหมด */}
+                  <div className="flex flex-wrap gap-2 mb-2">
+                    {(pendingFlexReply.messages || []).map((msg, idx) => (
+                      <span 
+                        key={idx}
+                        className={`text-xs px-2 py-1 rounded-full ${
+                          msg.type === 'flex' ? 'bg-purple-100 text-purple-700' :
+                          msg.type === 'image' ? 'bg-blue-100 text-blue-700' :
+                          'bg-gray-100 text-gray-700'
+                        }`}
+                      >
+                        Box{idx + 1}: {msg.type === 'flex' ? 'Flex' : msg.type === 'image' ? 'รูปภาพ' : 'ข้อความ'}
+                      </span>
+                    ))}
+                  </div>
+                  <p className="text-xs text-green-600">
+                    กดปุ่ม "ส่ง" หรือ Enter เพื่อส่ง {(pendingFlexReply.messages || []).length} ข้อความตามลำดับ
                   </p>
                 </div>
               )}
@@ -2876,7 +2963,10 @@ export default function InboxPage() {
                         <span className="text-green-600 font-mono text-sm">/{reply.shortcut}</span>
                         <span className="text-gray-700">{reply.title}</span>
                         <span className="text-gray-400 text-xs truncate flex-1 text-right">
-                          {reply.content.length > 30 ? reply.content.substring(0, 30) + '...' : reply.content}
+                          {(reply.messages && reply.messages.length > 0) 
+                            ? reply.messages.map((m, i) => `Box${i+1}: ${m.type === 'flex' ? 'Flex' : m.type === 'image' ? 'รูป' : 'ข้อความ'}`).join(' → ')
+                            : (reply.content && reply.content.length > 30 ? reply.content.substring(0, 30) + '...' : reply.content || '')
+                          }
                         </span>
                       </button>
                     ))}
@@ -2972,6 +3062,8 @@ export default function InboxPage() {
                   type="button"
                   onClick={async (e) => {
                     e.preventDefault();
+                    // ป้องกันกดซ้ำ
+                    if (sendingMessage || isUploading) return;
                     // ถ้ามี pending flex → ส่ง flex
                     if (pendingFlexReply) {
                       await sendPendingFlexReply();
@@ -2982,11 +3074,11 @@ export default function InboxPage() {
                       await handleUploadAndSend();
                     }
                     // ถ้ามีข้อความ → ส่งข้อความ
-                    if (newMessage.trim()) {
+                    if ((newMessage || '').trim()) {
                       handleSendMessage(e as any);
                     }
                   }}
-                  disabled={(!newMessage.trim() && pendingFiles.length === 0 && !pendingFlexReply) || sendingMessage || isUploading}
+                  disabled={(!(newMessage || '').trim() && pendingFiles.length === 0 && !pendingFlexReply) || sendingMessage || isUploading}
                   className="btn btn-primary px-6 py-2"
                 >
                   {sendingMessage || isUploading ? (

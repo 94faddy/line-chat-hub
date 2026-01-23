@@ -199,8 +199,10 @@ export default function SettingsPage() {
     });
   };
 
+  // ใช้ NEXT_PUBLIC_APIWEBHOOK สำหรับ Bot API URL
   const getBotApiUrl = () => {
-    const baseUrl = typeof window !== 'undefined' ? window.location.origin : '';
+    const baseUrl = process.env.NEXT_PUBLIC_APIWEBHOOK || 
+                    (typeof window !== 'undefined' ? window.location.origin : '');
     return `${baseUrl}/api/bot-messages/log/${botToken}`;
   };
 

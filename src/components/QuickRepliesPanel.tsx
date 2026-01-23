@@ -1,13 +1,17 @@
+// src/components/QuickRepliesPanel.tsx
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
 import { 
   FiZap, FiPlus, FiEdit2, FiTrash2, FiSearch, FiX,
   FiMessageSquare, FiCheck, FiCode, FiEye, FiAlertCircle,
-  FiCheckCircle, FiCopy
+  FiCheckCircle, FiCopy, FiChevronUp, FiChevronDown, FiImage,
+  FiBox
 } from 'react-icons/fi';
 import Swal from 'sweetalert2';
 import { FlexMessageRenderer } from '@/components/FlexMessageRenderer';
+
+// ==================== Interfaces ====================
 
 interface Channel {
   id: string;
@@ -15,18 +19,28 @@ interface Channel {
   picture_url?: string;
 }
 
+interface MessageBox {
+  type: 'text' | 'image' | 'flex';
+  content: string;
+  flex_content?: any;
+  media_url?: string;
+}
+
 interface QuickReply {
   id: string;
   title: string;
   shortcut?: string;
-  message_type: string;
-  content: string;
+  messages: MessageBox[];
+  // Legacy fields (backward compatibility)
+  message_type?: string;
+  content?: string;
   flex_content?: any;
   media_url?: string;
   channel_id?: string;
   channel_name?: string;
   use_count: number;
   is_active: boolean;
+  sort_order?: number;
   created_at: string;
 }
 
@@ -46,6 +60,8 @@ interface QuickRepliesPanelProps {
   // เมื่อ search เปลี่ยน
   onSearchChange?: (search: string) => void;
 }
+
+// ==================== Helper Functions ====================
 
 // Validate Flex JSON (รองรับรูปแบบจาก LINE Flex Simulator)
 const validateFlexJson = (json: string): { valid: boolean; error: string; parsed?: any } => {
@@ -78,7 +94,8 @@ const validateFlexJson = (json: string): { valid: boolean; error: string; parsed
   }
 };
 
-// Flex Preview Modal Component
+// ==================== Flex Preview Modal Component ====================
+
 const FlexPreviewModal: React.FC<{
   isOpen: boolean;
   onClose: () => void;
@@ -99,8 +116,9 @@ const FlexPreviewModal: React.FC<{
   }
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4">
       <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden animate-fadeIn">
+        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-100">
           <div>
             <h3 className="font-bold text-gray-900">ตัวอย่าง Flex Message</h3>
@@ -111,6 +129,7 @@ const FlexPreviewModal: React.FC<{
           </button>
         </div>
         
+        {/* Preview Area */}
         <div className="p-4 bg-[#7494C0] min-h-[300px]">
           {/* Chat bubble style */}
           <div className="flex justify-end mb-4">
@@ -141,6 +160,7 @@ const FlexPreviewModal: React.FC<{
           )}
         </div>
         
+        {/* Footer */}
         <div className="p-4 border-t border-gray-100">
           <button onClick={onClose} className="btn btn-secondary w-full">
             ปิด
@@ -150,6 +170,306 @@ const FlexPreviewModal: React.FC<{
     </div>
   );
 };
+
+// ==================== Message Box Editor Component ====================
+
+const MessageBoxEditor: React.FC<{
+  box: MessageBox;
+  index: number;
+  totalBoxes: number;
+  onChange: (index: number, box: MessageBox) => void;
+  onRemove: (index: number) => void;
+  onMoveUp: (index: number) => void;
+  onMoveDown: (index: number) => void;
+}> = ({ box, index, totalBoxes, onChange, onRemove, onMoveUp, onMoveDown }) => {
+  const [showPreview, setShowPreview] = useState(false);
+  const [flexValidation, setFlexValidation] = useState<{ valid: boolean; error: string }>({ valid: true, error: '' });
+
+  // Validate flex content on change
+  useEffect(() => {
+    if (box.type === 'flex' && box.flex_content) {
+      const jsonStr = typeof box.flex_content === 'string' 
+        ? box.flex_content 
+        : JSON.stringify(box.flex_content, null, 2);
+      const validation = validateFlexJson(jsonStr);
+      setFlexValidation({ valid: validation.valid, error: validation.error });
+    } else {
+      setFlexValidation({ valid: true, error: '' });
+    }
+  }, [box.flex_content, box.type]);
+
+  const getFlexContentString = () => {
+    if (!box.flex_content) return '';
+    return typeof box.flex_content === 'string' 
+      ? box.flex_content 
+      : JSON.stringify(box.flex_content, null, 2);
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    Swal.fire({
+      icon: 'success',
+      title: 'คัดลอกแล้ว',
+      timer: 1000,
+      showConfirmButton: false,
+      toast: true,
+      position: 'top-end'
+    });
+  };
+
+  return (
+    <div className="border border-gray-200 rounded-xl p-4 bg-gray-50">
+      {/* Box Header */}
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <FiBox className="w-4 h-4 text-gray-500" />
+          <span className="text-sm font-medium text-gray-700">Box {index + 1}</span>
+          <span className={`text-xs px-2 py-0.5 rounded-full ${
+            box.type === 'text' ? 'bg-green-100 text-green-700' :
+            box.type === 'image' ? 'bg-blue-100 text-blue-700' :
+            'bg-purple-100 text-purple-700'
+          }`}>
+            {box.type === 'text' ? 'ข้อความ' : box.type === 'image' ? 'รูปภาพ' : 'Flex'}
+          </span>
+        </div>
+        <div className="flex items-center gap-1">
+          {/* Move Up */}
+          <button
+            type="button"
+            onClick={() => onMoveUp(index)}
+            disabled={index === 0}
+            className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30"
+            title="เลื่อนขึ้น"
+          >
+            <FiChevronUp className="w-4 h-4" />
+          </button>
+          {/* Move Down */}
+          <button
+            type="button"
+            onClick={() => onMoveDown(index)}
+            disabled={index === totalBoxes - 1}
+            className="p-1 text-gray-400 hover:text-gray-600 disabled:opacity-30"
+            title="เลื่อนลง"
+          >
+            <FiChevronDown className="w-4 h-4" />
+          </button>
+          {/* Remove */}
+          {totalBoxes > 1 && (
+            <button
+              type="button"
+              onClick={() => onRemove(index)}
+              className="p-1 text-red-400 hover:text-red-600 ml-1"
+              title="ลบ Box นี้"
+            >
+              <FiTrash2 className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Message Type Selector */}
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        <button
+          type="button"
+          onClick={() => onChange(index, { ...box, type: 'text' })}
+          className={`p-2 rounded-lg border-2 text-center text-xs transition-all ${
+            box.type === 'text' 
+              ? 'border-green-500 bg-green-50 text-green-700' 
+              : 'border-gray-200 hover:border-gray-300'
+          }`}
+        >
+          <FiMessageSquare className="w-4 h-4 mx-auto mb-1" />
+          ข้อความ
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(index, { ...box, type: 'image' })}
+          className={`p-2 rounded-lg border-2 text-center text-xs transition-all ${
+            box.type === 'image' 
+              ? 'border-blue-500 bg-blue-50 text-blue-700' 
+              : 'border-gray-200 hover:border-gray-300'
+          }`}
+        >
+          <FiImage className="w-4 h-4 mx-auto mb-1" />
+          รูปภาพ
+        </button>
+        <button
+          type="button"
+          onClick={() => onChange(index, { ...box, type: 'flex' })}
+          className={`p-2 rounded-lg border-2 text-center text-xs transition-all ${
+            box.type === 'flex' 
+              ? 'border-purple-500 bg-purple-50 text-purple-700' 
+              : 'border-gray-200 hover:border-gray-300'
+          }`}
+        >
+          <FiCode className="w-4 h-4 mx-auto mb-1" />
+          Flex
+        </button>
+      </div>
+
+      {/* Content based on type */}
+      {box.type === 'text' && (
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            ข้อความ <span className="text-red-500">*</span>
+          </label>
+          <textarea
+            value={box.content}
+            onChange={(e) => onChange(index, { ...box, content: e.target.value })}
+            className="input w-full text-sm"
+            rows={3}
+            placeholder="พิมพ์ข้อความที่ต้องการตอบกลับ..."
+            required
+          />
+        </div>
+      )}
+
+      {box.type === 'image' && (
+        <div className="space-y-3">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              คำอธิบายรูปภาพ (alt text) <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={box.content}
+              onChange={(e) => onChange(index, { ...box, content: e.target.value })}
+              className="input w-full text-sm"
+              placeholder="คำอธิบายรูปภาพ"
+              required
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              URL รูปภาพ
+            </label>
+            <input
+              type="url"
+              value={box.media_url || ''}
+              onChange={(e) => onChange(index, { ...box, media_url: e.target.value })}
+              className="input w-full text-sm"
+              placeholder="https://example.com/image.jpg"
+            />
+          </div>
+          {/* Image Preview */}
+          {box.media_url && (
+            <div className="mt-2">
+              <img 
+                src={box.media_url} 
+                alt="Preview" 
+                className="max-h-32 rounded-lg object-contain border border-gray-200"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
+      {box.type === 'flex' && (
+        <div className="space-y-3">
+          {/* Alt Text */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Alt Text (ข้อความแจ้งเตือน) <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={box.content}
+              onChange={(e) => onChange(index, { ...box, content: e.target.value })}
+              className="input w-full text-sm"
+              placeholder="ข้อความที่แสดงในการแจ้งเตือน"
+              required
+            />
+          </div>
+
+          {/* Flex JSON Editor */}
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-sm font-medium text-gray-700">
+                Flex Message JSON <span className="text-red-500">*</span>
+              </label>
+              <div className="flex items-center gap-2">
+                {getFlexContentString() && (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(getFlexContentString())}
+                      className="text-xs flex items-center gap-1 px-2 py-1 text-gray-500 hover:text-gray-700"
+                    >
+                      <FiCopy className="w-3 h-3" />
+                      คัดลอก
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowPreview(true)}
+                      className="text-xs flex items-center gap-1 px-2 py-1 text-purple-500 hover:text-purple-700"
+                    >
+                      <FiEye className="w-3 h-3" />
+                      ดูตัวอย่าง
+                    </button>
+                  </>
+                )}
+              </div>
+            </div>
+            <textarea
+              value={getFlexContentString()}
+              onChange={(e) => {
+                let flexContent: any = e.target.value;
+                try {
+                  flexContent = JSON.parse(e.target.value);
+                } catch {
+                  // Keep as string if invalid JSON
+                }
+                onChange(index, { ...box, flex_content: flexContent });
+              }}
+              className={`input w-full text-sm font-mono ${
+                getFlexContentString() && !flexValidation.valid 
+                  ? 'border-red-300 focus:ring-red-500' 
+                  : ''
+              }`}
+              rows={8}
+              placeholder='{"type": "bubble", "body": {...}}'
+              required
+            />
+
+            {/* Validation Status */}
+            {getFlexContentString() && (
+              <div className={`flex items-center gap-2 mt-2 text-sm ${
+                flexValidation.valid ? 'text-green-600' : 'text-red-500'
+              }`}>
+                {flexValidation.valid ? (
+                  <>
+                    <FiCheckCircle className="w-4 h-4" />
+                    <span>JSON ถูกต้อง</span>
+                  </>
+                ) : (
+                  <>
+                    <FiAlertCircle className="w-4 h-4" />
+                    <span>{flexValidation.error}</span>
+                  </>
+                )}
+              </div>
+            )}
+
+            <p className="text-xs text-gray-500 mt-2">
+              รองรับรูปแบบจาก LINE Flex Simulator (type: "bubble" หรือ "carousel") หรือรูปแบบเต็ม (type: "flex")
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Flex Preview Modal */}
+      <FlexPreviewModal
+        isOpen={showPreview}
+        onClose={() => setShowPreview(false)}
+        flexJson={getFlexContentString()}
+        altText={box.content}
+      />
+    </div>
+  );
+};
+
+// ==================== Main Component ====================
 
 export default function QuickRepliesPanel({
   onSelect,
@@ -168,16 +488,16 @@ export default function QuickRepliesPanel({
   const [editingReply, setEditingReply] = useState<QuickReply | null>(null);
   const [saving, setSaving] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const [reordering, setReordering] = useState<string | null>(null);
   
   const [form, setForm] = useState({
     title: '',
     shortcut: '',
-    message_type: 'text',
-    content: '',
-    flex_content: '',
-    media_url: '',
-    channel_id: ''
+    channel_id: '',
+    messages: [{ type: 'text' as const, content: '', flex_content: null as any, media_url: '' }]
   });
+
+  // ==================== Effects ====================
 
   useEffect(() => {
     setSearch(externalSearch);
@@ -187,6 +507,8 @@ export default function QuickRepliesPanel({
     fetchChannels();
     fetchQuickReplies();
   }, []);
+
+  // ==================== API Functions ====================
 
   const fetchChannels = async () => {
     try {
@@ -214,6 +536,48 @@ export default function QuickRepliesPanel({
     }
   };
 
+  // ==================== Reorder Function ====================
+
+  const handleReorder = async (replyId: string, direction: 'up' | 'down', e: React.MouseEvent) => {
+    e.stopPropagation();
+    
+    if (reordering) return; // ป้องกันกดซ้ำ
+    
+    setReordering(replyId);
+    
+    try {
+      const res = await fetch('/api/quick-replies', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: replyId, direction })
+      });
+      
+      const data = await res.json();
+      
+      if (data.success) {
+        // รีเฟรชข้อมูล
+        await fetchQuickReplies();
+      } else {
+        // ถ้าอยู่บนสุด/ล่างสุดแล้ว ไม่ต้องแสดง error
+        if (!data.message.includes('บนสุด') && !data.message.includes('ล่างสุด')) {
+          Swal.fire({
+            icon: 'error',
+            title: 'เกิดข้อผิดพลาด',
+            text: data.message,
+            timer: 2000,
+            showConfirmButton: false
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Reorder error:', error);
+    } finally {
+      setReordering(null);
+    }
+  };
+
+  // ==================== Form Submit ====================
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -227,16 +591,40 @@ export default function QuickRepliesPanel({
       return;
     }
 
-    // Validate flex content if type is flex
-    if (form.message_type === 'flex') {
-      const validation = validateFlexJson(form.flex_content);
-      if (!validation.valid) {
+    // ตรวจสอบว่ามีอย่างน้อย 1 message
+    if (form.messages.length === 0) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'กรุณาเพิ่มอย่างน้อย 1 ข้อความ'
+      });
+      return;
+    }
+
+    // Validate all messages
+    for (let i = 0; i < form.messages.length; i++) {
+      const msg = form.messages[i];
+      
+      if (!msg.content.trim()) {
         Swal.fire({
           icon: 'error',
-          title: 'Flex Message JSON ไม่ถูกต้อง',
-          text: validation.error
+          title: `Box ${i + 1}: กรุณากรอกข้อความ`
         });
         return;
+      }
+      
+      if (msg.type === 'flex') {
+        const jsonStr = typeof msg.flex_content === 'string' 
+          ? msg.flex_content 
+          : JSON.stringify(msg.flex_content);
+        const validation = validateFlexJson(jsonStr || '');
+        if (!validation.valid) {
+          Swal.fire({
+            icon: 'error',
+            title: `Box ${i + 1}: Flex Message JSON ไม่ถูกต้อง`,
+            text: validation.error
+          });
+          return;
+        }
       }
     }
     
@@ -247,26 +635,25 @@ export default function QuickRepliesPanel({
         ? `/api/quick-replies/${editingReply.id}`
         : '/api/quick-replies';
 
-      // Prepare data
-      const bodyData: any = {
+      // Prepare messages - ensure flex_content is object
+      const preparedMessages = form.messages.map(msg => {
+        if (msg.type === 'flex' && msg.flex_content) {
+          return {
+            ...msg,
+            flex_content: typeof msg.flex_content === 'string' 
+              ? JSON.parse(msg.flex_content) 
+              : msg.flex_content
+          };
+        }
+        return msg;
+      });
+
+      const bodyData = {
         title: form.title,
         shortcut: form.shortcut || null,
-        message_type: form.message_type,
-        content: form.message_type === 'flex' ? (form.content || 'Flex Message') : form.content,
         channel_id: form.channel_id,
-        media_url: form.media_url || null
+        messages: preparedMessages
       };
-
-      // Add flex_content if type is flex
-      if (form.message_type === 'flex') {
-        try {
-          bodyData.flex_content = JSON.parse(form.flex_content);
-        } catch (e) {
-          bodyData.flex_content = null;
-        }
-      } else {
-        bodyData.flex_content = null;
-      }
       
       const res = await fetch(url, {
         method: editingReply ? 'PUT' : 'POST',
@@ -300,17 +687,35 @@ export default function QuickRepliesPanel({
     }
   };
 
+  // ==================== Edit & Delete ====================
+
   const handleEdit = (reply: QuickReply, e: React.MouseEvent) => {
     e.stopPropagation();
     setEditingReply(reply);
+    
+    // Convert to form format
+    let messages = reply.messages || [];
+    
+    // Legacy format support
+    if (messages.length === 0 && reply.content) {
+      messages = [{
+        type: (reply.message_type as 'text' | 'image' | 'flex') || 'text',
+        content: reply.content || '',
+        flex_content: reply.flex_content,
+        media_url: reply.media_url || ''
+      }];
+    }
+    
     setForm({
       title: reply.title,
       shortcut: reply.shortcut || '',
-      message_type: reply.message_type,
-      content: reply.content,
-      flex_content: reply.flex_content ? JSON.stringify(reply.flex_content, null, 2) : '',
-      media_url: reply.media_url || '',
-      channel_id: reply.channel_id?.toString() || ''
+      channel_id: reply.channel_id?.toString() || '',
+      messages: messages.map(m => ({
+        type: m.type || 'text',
+        content: m.content || '',
+        flex_content: m.flex_content,
+        media_url: m.media_url || ''
+      }))
     });
     setShowForm(true);
   };
@@ -353,16 +758,15 @@ export default function QuickRepliesPanel({
     }
   };
 
+  // ==================== Helper Functions ====================
+
   const resetForm = () => {
     setEditingReply(null);
     setForm({
       title: '',
       shortcut: '',
-      message_type: 'text',
-      content: '',
-      flex_content: '',
-      media_url: '',
-      channel_id: currentChannelId?.toString() || (channels.length > 0 ? channels[0].id.toString() : '')
+      channel_id: currentChannelId?.toString() || (channels.length > 0 ? channels[0].id.toString() : ''),
+      messages: [{ type: 'text', content: '', flex_content: null, media_url: '' }]
     });
   };
 
@@ -380,13 +784,51 @@ export default function QuickRepliesPanel({
     }
   };
 
-  // Filter quick replies
+  // ==================== Message Box Handlers ====================
+
+  const handleMessageChange = (index: number, box: MessageBox) => {
+    const newMessages = [...form.messages];
+    newMessages[index] = box;
+    setForm({ ...form, messages: newMessages });
+  };
+
+  const handleAddMessage = () => {
+    setForm({
+      ...form,
+      messages: [...form.messages, { type: 'text', content: '', flex_content: null, media_url: '' }]
+    });
+  };
+
+  const handleRemoveMessage = (index: number) => {
+    if (form.messages.length > 1) {
+      const newMessages = form.messages.filter((_, i) => i !== index);
+      setForm({ ...form, messages: newMessages });
+    }
+  };
+
+  const handleMoveMessageUp = (index: number) => {
+    if (index > 0) {
+      const newMessages = [...form.messages];
+      [newMessages[index - 1], newMessages[index]] = [newMessages[index], newMessages[index - 1]];
+      setForm({ ...form, messages: newMessages });
+    }
+  };
+
+  const handleMoveMessageDown = (index: number) => {
+    if (index < form.messages.length - 1) {
+      const newMessages = [...form.messages];
+      [newMessages[index], newMessages[index + 1]] = [newMessages[index + 1], newMessages[index]];
+      setForm({ ...form, messages: newMessages });
+    }
+  };
+
+  // ==================== Filter ====================
+
   const filteredReplies = quickReplies.filter(reply => {
     // กรองตาม channel - แสดงเฉพาะที่ตรงกับ channel ที่เลือก
     if (currentChannelId) {
       const replyChannelId = reply.channel_id?.toString();
       const currentChId = currentChannelId.toString();
-      // แสดงเฉพาะที่ตรงกับ channel เท่านั้น
       if (replyChannelId !== currentChId) {
         return false;
       }
@@ -396,13 +838,14 @@ export default function QuickRepliesPanel({
     if (search) {
       const searchLower = search.toLowerCase();
       return reply.title.toLowerCase().includes(searchLower) ||
-             reply.content.toLowerCase().includes(searchLower) ||
-             reply.shortcut?.toLowerCase().includes(searchLower);
+             reply.shortcut?.toLowerCase().includes(searchLower) ||
+             reply.messages?.some(m => m.content.toLowerCase().includes(searchLower));
     }
     return true;
   });
 
-  // Keyboard navigation
+  // ==================== Keyboard Navigation ====================
+
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (filteredReplies.length === 0) return;
     
@@ -427,7 +870,23 @@ export default function QuickRepliesPanel({
     }
   }, [filteredReplies, selectedIndex, onClose]);
 
-  // Compact mode (for inbox)
+  // ==================== Preview Text Helper ====================
+
+  const getPreviewText = (reply: QuickReply) => {
+    const messages = reply.messages || [];
+    if (messages.length === 0) return reply.content || '';
+    
+    // แสดงประเภทแต่ละ box
+    return messages.map((msg, idx) => {
+      const boxNum = `Box${idx + 1}`;
+      if (msg.type === 'flex') return `${boxNum}: [Flex]`;
+      if (msg.type === 'image') return `${boxNum}: [รูปภาพ]`;
+      return `${boxNum}: [ข้อความ]`;
+    }).join(' → ');
+  };
+
+  // ==================== Render: Compact Mode ====================
+
   if (compact) {
     return (
       <div 
@@ -491,8 +950,16 @@ export default function QuickRepliesPanel({
               >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2 flex-1 min-w-0">
-                    {reply.message_type === 'flex' ? (
+                    {/* Icon based on message count/type */}
+                    {(reply.messages?.length || 0) > 1 ? (
+                      <div className="flex items-center gap-0.5 text-orange-500">
+                        <FiBox className="w-4 h-4 flex-shrink-0" />
+                        <span className="text-xs">{reply.messages?.length}</span>
+                      </div>
+                    ) : reply.messages?.[0]?.type === 'flex' ? (
                       <FiCode className="w-4 h-4 text-purple-500 flex-shrink-0" />
+                    ) : reply.messages?.[0]?.type === 'image' ? (
+                      <FiImage className="w-4 h-4 text-blue-500 flex-shrink-0" />
                     ) : (
                       <FiMessageSquare className="w-4 h-4 text-line-green flex-shrink-0" />
                     )}
@@ -501,11 +968,33 @@ export default function QuickRepliesPanel({
                       <code className="text-xs bg-gray-100 px-1 rounded text-gray-500">/{reply.shortcut}</code>
                     )}
                   </div>
-                  {/* Edit & Delete Buttons */}
+                  {/* Action Buttons */}
                   <div 
                     className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    {/* Reorder Up */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleReorder(reply.id, 'up', e)}
+                      disabled={reordering === reply.id}
+                      className="p-1 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                      title="เลื่อนขึ้น"
+                    >
+                      <FiChevronUp className="w-3.5 h-3.5" />
+                    </button>
+                    {/* Reorder Down */}
+                    <button
+                      type="button"
+                      onClick={(e) => handleReorder(reply.id, 'down', e)}
+                      disabled={reordering === reply.id}
+                      className="p-1 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                      title="เลื่อนลง"
+                    >
+                      <FiChevronDown className="w-3.5 h-3.5" />
+                    </button>
+                    <div className="w-px h-3 bg-gray-200 mx-0.5" />
+                    {/* Edit */}
                     <button
                       type="button"
                       onClick={(e) => handleEdit(reply, e)}
@@ -514,6 +1003,7 @@ export default function QuickRepliesPanel({
                     >
                       <FiEdit2 className="w-3.5 h-3.5" />
                     </button>
+                    {/* Delete */}
                     <button
                       type="button"
                       onClick={(e) => handleDelete(reply, e)}
@@ -525,14 +1015,14 @@ export default function QuickRepliesPanel({
                   </div>
                 </div>
                 <p className="text-xs text-gray-500 truncate mt-0.5 ml-6">
-                  {reply.message_type === 'flex' ? '[Flex Message]' : reply.content}
+                  {getPreviewText(reply)}
                 </p>
               </div>
             ))
           )}
         </div>
 
-        {/* Form Modal - ใช้ร่วมกัน */}
+        {/* Form Modal */}
         {showForm && (
           <QuickReplyFormModal
             form={form}
@@ -545,13 +1035,19 @@ export default function QuickRepliesPanel({
               setShowForm(false);
               resetForm();
             }}
+            onMessageChange={handleMessageChange}
+            onAddMessage={handleAddMessage}
+            onRemoveMessage={handleRemoveMessage}
+            onMoveMessageUp={handleMoveMessageUp}
+            onMoveMessageDown={handleMoveMessageDown}
           />
         )}
       </div>
     );
   }
 
-  // Full mode
+  // ==================== Render: Full Mode ====================
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -606,7 +1102,7 @@ export default function QuickRepliesPanel({
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {filteredReplies.map(reply => (
+          {filteredReplies.map((reply) => (
             <div 
               key={reply.id}
               onClick={() => onSelect && handleSelect(reply)}
@@ -616,16 +1112,43 @@ export default function QuickRepliesPanel({
                 ${onSelect ? 'cursor-pointer' : ''}
               `}
             >
+              {/* Card Header */}
               <div className="flex items-start justify-between mb-3">
                 <div className="flex items-center gap-2">
-                  {reply.message_type === 'flex' ? (
+                  {/* Icon */}
+                  {(reply.messages?.length || 0) > 1 ? (
+                    <div className="flex items-center gap-1 text-orange-500">
+                      <FiBox className="w-5 h-5" />
+                      <span className="text-xs font-medium">{reply.messages?.length}</span>
+                    </div>
+                  ) : reply.messages?.[0]?.type === 'flex' ? (
                     <FiCode className="w-5 h-5 text-purple-500" />
+                  ) : reply.messages?.[0]?.type === 'image' ? (
+                    <FiImage className="w-5 h-5 text-blue-500" />
                   ) : (
                     <FiMessageSquare className="w-5 h-5 text-line-green" />
                   )}
                   <span className="font-semibold text-gray-900">{reply.title}</span>
                 </div>
+                {/* Actions */}
                 <div className="flex items-center gap-1">
+                  <button
+                    onClick={(e) => handleReorder(reply.id, 'up', e)}
+                    disabled={reordering === reply.id}
+                    className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                    title="เลื่อนขึ้น"
+                  >
+                    <FiChevronUp className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={(e) => handleReorder(reply.id, 'down', e)}
+                    disabled={reordering === reply.id}
+                    className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded disabled:opacity-50"
+                    title="เลื่อนลง"
+                  >
+                    <FiChevronDown className="w-4 h-4" />
+                  </button>
+                  <div className="w-px h-4 bg-gray-200 mx-1" />
                   <button
                     onClick={(e) => handleEdit(reply, e)}
                     className="p-1.5 text-gray-400 hover:text-line-green hover:bg-gray-100 rounded"
@@ -641,16 +1164,25 @@ export default function QuickRepliesPanel({
                 </div>
               </div>
               
-              {/* Channel Badge */}
-              <div className="mb-2 flex items-center gap-2">
+              {/* Tags */}
+              <div className="mb-2 flex items-center gap-2 flex-wrap">
                 <span className="tag bg-green-100 text-green-700 text-xs">
                   {reply.channel_name || 'Unknown Channel'}
                 </span>
-                {reply.message_type === 'flex' && (
-                  <span className="tag bg-purple-100 text-purple-700 text-xs">
-                    Flex
+                {(reply.messages?.length || 0) > 1 && (
+                  <span className="tag bg-orange-100 text-orange-700 text-xs">
+                    {reply.messages?.length} boxes
                   </span>
                 )}
+                {reply.messages?.map((m, i) => (
+                  <span key={i} className={`tag text-xs ${
+                    m.type === 'flex' ? 'bg-purple-100 text-purple-700' :
+                    m.type === 'image' ? 'bg-blue-100 text-blue-700' :
+                    'bg-gray-100 text-gray-600'
+                  }`}>
+                    {m.type === 'flex' ? 'Flex' : m.type === 'image' ? 'Image' : 'Text'}
+                  </span>
+                ))}
               </div>
               
               {/* Shortcut */}
@@ -661,14 +1193,13 @@ export default function QuickRepliesPanel({
               )}
               
               {/* Content Preview */}
-              <p className="text-sm text-gray-600 mb-3 line-clamp-3">
-                {reply.message_type === 'flex' ? '[Flex Message]' : reply.content}
+              <p className="text-sm text-gray-600 mb-3 line-clamp-2">
+                {getPreviewText(reply)}
               </p>
               
               {/* Stats */}
               <div className="flex items-center justify-between text-xs text-gray-400">
                 <span>ใช้งาน {reply.use_count} ครั้ง</span>
-                <span>{reply.message_type}</span>
               </div>
             </div>
           ))}
@@ -688,13 +1219,19 @@ export default function QuickRepliesPanel({
             setShowForm(false);
             resetForm();
           }}
+          onMessageChange={handleMessageChange}
+          onAddMessage={handleAddMessage}
+          onRemoveMessage={handleRemoveMessage}
+          onMoveMessageUp={handleMoveMessageUp}
+          onMoveMessageDown={handleMoveMessageDown}
         />
       )}
     </div>
   );
 }
 
-// Form Modal Component
+// ==================== Form Modal Component ====================
+
 function QuickReplyFormModal({
   form,
   setForm,
@@ -702,7 +1239,12 @@ function QuickReplyFormModal({
   editingReply,
   saving,
   onSubmit,
-  onClose
+  onClose,
+  onMessageChange,
+  onAddMessage,
+  onRemoveMessage,
+  onMoveMessageUp,
+  onMoveMessageDown
 }: {
   form: any;
   setForm: (form: any) => void;
@@ -711,40 +1253,17 @@ function QuickReplyFormModal({
   saving: boolean;
   onSubmit: (e: React.FormEvent) => void;
   onClose: () => void;
+  onMessageChange: (index: number, box: MessageBox) => void;
+  onAddMessage: () => void;
+  onRemoveMessage: (index: number) => void;
+  onMoveMessageUp: (index: number) => void;
+  onMoveMessageDown: (index: number) => void;
 }) {
-  const [showPreview, setShowPreview] = useState(false);
-  const [flexValidation, setFlexValidation] = useState<{ valid: boolean; error: string }>({ valid: true, error: '' });
-
-  // Validate flex content on change
-  useEffect(() => {
-    if (form.message_type === 'flex' && form.flex_content) {
-      const validation = validateFlexJson(form.flex_content);
-      setFlexValidation({ valid: validation.valid, error: validation.error });
-    } else {
-      setFlexValidation({ valid: true, error: '' });
-    }
-  }, [form.flex_content, form.message_type]);
-
-  const handleFlexContentChange = (value: string) => {
-    setForm({ ...form, flex_content: value });
-  };
-
-  const copyToClipboard = (text: string) => {
-    navigator.clipboard.writeText(text);
-    Swal.fire({
-      icon: 'success',
-      title: 'คัดลอกแล้ว',
-      timer: 1000,
-      showConfirmButton: false,
-      toast: true,
-      position: 'top-end'
-    });
-  };
-
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-2xl w-full max-w-2xl animate-fadeIn max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-6 border-b border-gray-100">
+        {/* Header */}
+        <div className="flex items-center justify-between p-6 border-b border-gray-100 sticky top-0 bg-white z-10">
           <h2 className="text-lg font-bold text-gray-900">
             {editingReply ? 'แก้ไขข้อความตอบกลับ' : 'เพิ่มข้อความตอบกลับ'}
           </h2>
@@ -767,7 +1286,7 @@ function QuickReplyFormModal({
               value={form.title}
               onChange={(e) => setForm({ ...form, title: e.target.value })}
               className="input w-full"
-              placeholder="เช่น ทักทาย, สอบถามราคา"
+              placeholder="เช่น โปรโมชั่นพิเศษ, ทักทายลูกค้า"
               required
               maxLength={100}
             />
@@ -802,191 +1321,51 @@ function QuickReplyFormModal({
               value={form.shortcut}
               onChange={(e) => setForm({ ...form, shortcut: e.target.value })}
               className="input w-full"
-              placeholder="เช่น hi, price"
+              placeholder="เช่น promo, hi, price"
               maxLength={50}
             />
             <p className="text-xs text-gray-500 mt-1">พิมพ์ /{form.shortcut || 'shortcut'} เพื่อเรียกใช้งานอย่างรวดเร็ว</p>
           </div>
 
-          {/* Message Type */}
+          {/* Message Boxes */}
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              ประเภทข้อความ
-            </label>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="flex items-center justify-between mb-3">
+              <label className="block text-sm font-medium text-gray-700">
+                ข้อความ <span className="text-red-500">*</span>
+                <span className="text-gray-400 font-normal ml-2">({form.messages.length} box)</span>
+              </label>
               <button
                 type="button"
-                onClick={() => setForm({ ...form, message_type: 'text' })}
-                className={`p-3 rounded-lg border-2 text-center transition-all ${
-                  form.message_type === 'text' 
-                    ? 'border-green-500 bg-green-50 text-green-700' 
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
+                onClick={onAddMessage}
+                className="text-sm text-green-600 hover:text-green-700 flex items-center gap-1"
               >
-                <FiMessageSquare className="w-5 h-5 mx-auto mb-1" />
-                <span className="text-sm font-medium">ข้อความ</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, message_type: 'image' })}
-                className={`p-3 rounded-lg border-2 text-center transition-all ${
-                  form.message_type === 'image' 
-                    ? 'border-blue-500 bg-blue-50 text-blue-700' 
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <FiZap className="w-5 h-5 mx-auto mb-1" />
-                <span className="text-sm font-medium">รูปภาพ</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setForm({ ...form, message_type: 'flex' })}
-                className={`p-3 rounded-lg border-2 text-center transition-all ${
-                  form.message_type === 'flex' 
-                    ? 'border-purple-500 bg-purple-50 text-purple-700' 
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-              >
-                <FiCode className="w-5 h-5 mx-auto mb-1" />
-                <span className="text-sm font-medium">Flex Message</span>
+                <FiPlus className="w-4 h-4" />
+                เพิ่ม Box
               </button>
             </div>
+            
+            <div className="space-y-3">
+              {form.messages.map((box: MessageBox, index: number) => (
+                <MessageBoxEditor
+                  key={index}
+                  box={box}
+                  index={index}
+                  totalBoxes={form.messages.length}
+                  onChange={onMessageChange}
+                  onRemove={onRemoveMessage}
+                  onMoveUp={onMoveMessageUp}
+                  onMoveDown={onMoveMessageDown}
+                />
+              ))}
+            </div>
+            
+            <p className="text-xs text-gray-500 mt-3">
+              💡 เพิ่มได้หลาย Box แต่ละ Box จะส่งเป็นข้อความแยกกันตามลำดับ
+            </p>
           </div>
 
-          {/* Content based on message type */}
-          {form.message_type === 'text' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                ข้อความ <span className="text-red-500">*</span>
-              </label>
-              <textarea
-                value={form.content}
-                onChange={(e) => setForm({ ...form, content: e.target.value })}
-                className="input w-full"
-                rows={4}
-                placeholder="พิมพ์ข้อความที่ต้องการตอบกลับ..."
-                required
-              />
-            </div>
-          )}
-
-          {form.message_type === 'image' && (
-            <>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  ข้อความ (alt text) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={form.content}
-                  onChange={(e) => setForm({ ...form, content: e.target.value })}
-                  className="input w-full"
-                  placeholder="คำอธิบายรูปภาพ"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  URL รูปภาพ
-                </label>
-                <input
-                  type="url"
-                  value={form.media_url}
-                  onChange={(e) => setForm({ ...form, media_url: e.target.value })}
-                  className="input w-full"
-                  placeholder="https://example.com/image.jpg"
-                />
-              </div>
-            </>
-          )}
-
-          {form.message_type === 'flex' && (
-            <div className="space-y-4">
-              {/* Alt Text */}
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  Alt Text (ข้อความแจ้งเตือน) <span className="text-red-500">*</span>
-                </label>
-                <input
-                  type="text"
-                  value={form.content}
-                  onChange={(e) => setForm({ ...form, content: e.target.value })}
-                  className="input w-full"
-                  placeholder="ข้อความที่แสดงในการแจ้งเตือน"
-                  required
-                />
-              </div>
-
-              {/* Flex JSON Editor */}
-              <div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-sm font-medium text-gray-700">
-                    Flex Message JSON <span className="text-red-500">*</span>
-                  </label>
-                  <div className="flex items-center gap-2">
-                    {form.flex_content && (
-                      <>
-                        <button
-                          type="button"
-                          onClick={() => copyToClipboard(form.flex_content)}
-                          className="text-xs flex items-center gap-1 px-2 py-1 text-gray-500 hover:text-gray-700"
-                        >
-                          <FiCopy className="w-3 h-3" />
-                          คัดลอก
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setShowPreview(true)}
-                          className="text-xs flex items-center gap-1 px-2 py-1 text-purple-500 hover:text-purple-700"
-                        >
-                          <FiEye className="w-3 h-3" />
-                          ดูตัวอย่าง
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-                <textarea
-                  value={form.flex_content}
-                  onChange={(e) => handleFlexContentChange(e.target.value)}
-                  className={`input w-full font-mono text-sm ${
-                    form.flex_content && !flexValidation.valid 
-                      ? 'border-red-300 focus:ring-red-500' 
-                      : ''
-                  }`}
-                  rows={12}
-                  placeholder='{"type": "bubble", "body": {...}}'
-                  required
-                />
-
-                {/* Validation Status */}
-                {form.flex_content && (
-                  <div className={`flex items-center gap-2 mt-2 text-sm ${
-                    flexValidation.valid ? 'text-green-600' : 'text-red-500'
-                  }`}>
-                    {flexValidation.valid ? (
-                      <>
-                        <FiCheckCircle className="w-4 h-4" />
-                        <span>JSON ถูกต้อง</span>
-                      </>
-                    ) : (
-                      <>
-                        <FiAlertCircle className="w-4 h-4" />
-                        <span>{flexValidation.error}</span>
-                      </>
-                    )}
-                  </div>
-                )}
-
-                <p className="text-xs text-gray-500 mt-2">
-                  รองรับรูปแบบจาก LINE Flex Simulator (type: "bubble" หรือ "carousel") หรือรูปแบบเต็ม (type: "flex")
-                </p>
-              </div>
-            </div>
-          )}
-
           {/* Actions */}
-          <div className="flex gap-3 pt-4">
+          <div className="flex gap-3 pt-4 sticky bottom-0 bg-white pb-2">
             <button
               type="button"
               onClick={onClose}
@@ -996,7 +1375,7 @@ function QuickReplyFormModal({
             </button>
             <button
               type="submit"
-              disabled={saving || (form.message_type === 'flex' && !flexValidation.valid)}
+              disabled={saving}
               className="btn btn-primary flex-1"
             >
               {saving ? (
@@ -1013,14 +1392,6 @@ function QuickReplyFormModal({
             </button>
           </div>
         </form>
-
-        {/* Flex Preview Modal */}
-        <FlexPreviewModal
-          isOpen={showPreview}
-          onClose={() => setShowPreview(false)}
-          flexJson={form.flex_content}
-          altText={form.content}
-        />
       </div>
     </div>
   );

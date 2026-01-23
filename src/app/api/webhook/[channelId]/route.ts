@@ -46,6 +46,12 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       console.log('📥 [Webhook] Channel ID from header:', channelIdFromHeader);
     }
 
+    // ✅ Handle empty body (LINE verify webhook หรือ health check)
+    if (!body || body.trim() === '') {
+      console.log('📥 [Webhook] Empty body - likely verify request');
+      return NextResponse.json({ success: true, message: 'OK' });
+    }
+
     // ✅ ถ้ามี header และไม่ตรงกับ URL → Skip (webhook มาจาก channel อื่น)
     if (channelIdFromHeader && channelIdFromHeader !== channelId) {
       console.log(`⚠️ [Webhook] Channel mismatch - Header: ${channelIdFromHeader}, URL: ${channelId} - Skipping`);
@@ -81,10 +87,28 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
     }
 
-    const webhookData = JSON.parse(body);
+    // ✅ Safe JSON parse with error handling
+    let webhookData;
+    try {
+      webhookData = JSON.parse(body);
+    } catch (parseError) {
+      console.error('❌ [Webhook] Invalid JSON body:', parseError);
+      console.error('❌ [Webhook] Body content:', body.substring(0, 200));
+      return NextResponse.json({ 
+        success: false, 
+        message: 'Invalid JSON body' 
+      }, { status: 400 });
+    }
+
     const events = webhookData.events || [];
 
     console.log('📥 [Webhook] Events count:', events.length);
+
+    // ✅ ถ้าไม่มี events (verify webhook) → return OK
+    if (events.length === 0) {
+      console.log('📥 [Webhook] No events - verify webhook acknowledged');
+      return NextResponse.json({ success: true, message: 'No events' });
+    }
     
     // ✅ Log event types เพื่อ debug
     if (!signatureValid && events.length > 0) {
@@ -238,156 +262,108 @@ async function handleEvent(event: any, channel: any) {
 
 async function getOrCreateLineUser(channelId: any, lineUserId: string, accessToken: string) {
   // ✅ ค้นหา user โดยไม่ต้องเช็ค source_type เพื่อรองรับ record เก่า
-  let existingUser = await LineUser.findOne({
+  let lineUser = await LineUser.findOne({
     channel_id: channelId,
     line_user_id: lineUserId,
+    $or: [
+      { source_type: 'user' },
+      { source_type: { $exists: false } },
+      { source_type: null }
+    ]
   });
 
-  if (existingUser) {
+  if (!lineUser) {
+    // ดึงข้อมูล Profile จาก LINE
+    let profile: any = {};
+    try {
+      profile = await getUserProfile(accessToken, lineUserId);
+    } catch (e) {
+      console.error('Get user profile error:', e);
+    }
+
+    // สร้าง LINE User ใหม่
+    lineUser = new LineUser({
+      channel_id: channelId,
+      line_user_id: lineUserId,
+      display_name: profile.displayName || 'Unknown',
+      picture_url: profile.pictureUrl || null,
+      status_message: profile.statusMessage || null,
+      source_type: 'user',
+      last_message_at: new Date(),
+    });
+
+    await lineUser.save();
+    console.log('✅ [Webhook] Created new LINE user:', lineUser.display_name);
+  } else {
     // ✅ อัพเดท source_type ถ้ายังไม่มี
-    if (!existingUser.source_type) {
-      existingUser.source_type = 'user';
-      await existingUser.save();
+    if (!lineUser.source_type) {
+      lineUser.source_type = 'user';
+      await lineUser.save();
     }
-    
-    // ⭐ ถ้าได้รับข้อความจาก user แสดงว่ายังติดตามอยู่
-    // ถ้า display_name เป็น null/Unknown ลองดึง profile ใหม่
-    if (!existingUser.display_name || existingUser.display_name === 'Unknown') {
-      try {
-        const profile = await getUserProfile(accessToken, lineUserId);
-        if (profile && profile.displayName) {
-          existingUser.display_name = profile.displayName;
-          existingUser.picture_url = profile.pictureUrl || existingUser.picture_url;
-          existingUser.status_message = profile.statusMessage || existingUser.status_message;
-          existingUser.follow_status = 'following';
-          await existingUser.save();
-          console.log('✅ [Webhook] Updated user profile:', profile.displayName);
-        }
-      } catch (e) {
-        console.error('❌ [Webhook] Retry get profile error:', e);
-      }
-    } else {
-      // ⭐ User ส่งข้อความมา แสดงว่ายังติดตามอยู่
-      if (existingUser.follow_status !== 'following') {
-        existingUser.follow_status = 'following';
-        await existingUser.save();
-        console.log('✅ [Webhook] User re-followed, status updated');
-      }
-    }
-    return existingUser;
   }
 
-  // ดึงโปรไฟล์จาก LINE
-  let profile: any = {};
-  let followStatus: 'following' | 'unfollowed' | 'blocked' | 'unknown' = 'following';
-  
-  try {
-    profile = await getUserProfile(accessToken, lineUserId);
-    console.log('✅ [Webhook] Got user profile:', profile.displayName);
-  } catch (e: any) {
-    console.error('❌ [Webhook] Get profile error:', e);
-    // ถ้า user ส่งข้อความมาได้ แต่ดึง profile ไม่ได้ อาจจะปิด privacy
-    followStatus = 'unknown';
-  }
-
-  // สร้าง user ใหม่
-  const newUser = new LineUser({
-    channel_id: channelId,
-    line_user_id: lineUserId,
-    display_name: profile.displayName || null,
-    picture_url: profile.pictureUrl || null,
-    status_message: profile.statusMessage || null,
-    language: profile.language || 'th',
-    follow_status: profile.displayName ? 'following' : followStatus,
-    source_type: 'user', // ✅ ระบุว่าเป็น user
-  });
-
-  await newUser.save();
-  return newUser;
+  return lineUser;
 }
 
-// ✅ ฟังก์ชันสำหรับสร้าง/ดึง Group หรือ Room
 async function getOrCreateGroupOrRoom(
   channelId: any, 
   targetId: string, 
   sourceType: 'group' | 'room',
   accessToken: string
 ) {
-  // ✅ ค้นหาโดยใช้ line_user_id (groupId/roomId) โดยไม่ต้องเช็ค source_type
-  // เพื่อรองรับ record เก่าที่ไม่มี source_type
-  let existing = await LineUser.findOne({
+  // ค้นหา Group/Room ที่มีอยู่
+  const query: any = {
     channel_id: channelId,
-    line_user_id: targetId,
-  });
-
-  if (existing) {
-    // ✅ ถ้าเจอ record เก่า ให้อัพเดท source_type และ group_id/room_id
-    if (!existing.source_type || existing.source_type === 'user') {
-      existing.source_type = sourceType;
-      if (sourceType === 'group') {
-        existing.group_id = targetId;
-      } else {
-        existing.room_id = targetId;
-      }
-      
-      // ดึงข้อมูลกลุ่มจาก LINE
-      if (sourceType === 'group') {
-        try {
-          const groupInfo = await getGroupSummary(accessToken, targetId);
-          const memberCount = await getGroupMemberCount(accessToken, targetId);
-          existing.display_name = groupInfo.groupName || existing.display_name;
-          existing.picture_url = groupInfo.pictureUrl || existing.picture_url;
-          existing.member_count = memberCount + 1; // +1 รวม bot
-        } catch (e) {
-          console.error('❌ [Webhook] Update group info error:', e);
-        }
-      }
-      
-      await existing.save();
-      console.log('✅ [Webhook] Updated existing record to', sourceType, ':', existing.display_name);
-    }
-    return existing;
-  }
-
-  // ดึงข้อมูลกลุ่มจาก LINE
-  let groupInfo: any = {};
-  let memberCount = 0;
+    source_type: sourceType,
+  };
   
   if (sourceType === 'group') {
-    try {
-      groupInfo = await getGroupSummary(accessToken, targetId);
-      memberCount = await getGroupMemberCount(accessToken, targetId);
-      console.log('✅ [Webhook] Got group info:', groupInfo.groupName);
-    } catch (e) {
-      console.error('❌ [Webhook] Get group info error:', e);
+    query.group_id = targetId;
+  } else {
+    query.room_id = targetId;
+  }
+  
+  let lineUser = await LineUser.findOne(query);
+
+  if (!lineUser) {
+    // สร้างใหม่
+    let groupInfo: any = {};
+    let memberCount = 0;
+    
+    if (sourceType === 'group') {
+      try {
+        groupInfo = await getGroupSummary(accessToken, targetId);
+        memberCount = await getGroupMemberCount(accessToken, targetId);
+      } catch (e) {
+        console.error('❌ [Webhook] Get group info error:', e);
+      }
     }
+
+    lineUser = new LineUser({
+      channel_id: channelId,
+      line_user_id: targetId, // ใช้ targetId เป็น line_user_id สำหรับ group/room
+      display_name: groupInfo.groupName || (sourceType === 'group' ? 'กลุ่มไลน์' : 'ห้องแชท'),
+      picture_url: groupInfo.pictureUrl || null,
+      source_type: sourceType,
+      group_id: sourceType === 'group' ? targetId : undefined,
+      room_id: sourceType === 'room' ? targetId : undefined,
+      member_count: memberCount,
+      last_message_at: new Date(),
+    });
+
+    await lineUser.save();
+    console.log(`✅ [Webhook] Created new ${sourceType}:`, lineUser.display_name);
   }
 
-  // สร้าง entry ใหม่สำหรับ group/room
-  const newEntry = new LineUser({
-    channel_id: channelId,
-    line_user_id: targetId, // ใช้ groupId/roomId เป็น line_user_id
-    display_name: groupInfo.groupName || `${sourceType === 'group' ? 'กลุ่ม' : 'ห้อง'} ${targetId.substring(0, 8)}...`,
-    picture_url: groupInfo.pictureUrl || null,
-    source_type: sourceType,
-    group_id: sourceType === 'group' ? targetId : undefined,
-    room_id: sourceType === 'room' ? targetId : undefined,
-    member_count: memberCount + 1, // +1 รวม bot
-    follow_status: 'following',
-  });
-
-  await newEntry.save();
-  console.log('✅ [Webhook] Created new', sourceType, ':', newEntry.display_name);
-  return newEntry;
+  return lineUser;
 }
 
-// ✅ ฟังก์ชันดึงข้อมูลคนส่งในกลุ่ม/ห้อง
 async function getSenderInfo(
   accessToken: string,
   sourceType: 'group' | 'room',
   targetId: string,
   userId: string
-): Promise<{ user_id: string; display_name?: string; picture_url?: string }> {
+) {
   try {
     let profile: any;
     

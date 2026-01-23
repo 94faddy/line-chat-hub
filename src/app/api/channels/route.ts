@@ -176,8 +176,9 @@ export async function POST(request: NextRequest) {
       console.error('Get channel info error:', e);
     }
 
-    // สร้าง Webhook URL
-    const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/webhook/${channel_id}`;
+    // สร้าง Webhook URL - ใช้ NEXT_PUBLIC_APIWEBHOOK สำหรับ subdomain webhook
+    const apiWebhookBase = process.env.NEXT_PUBLIC_APIWEBHOOK || process.env.NEXT_PUBLIC_APP_URL;
+    const webhookUrl = `${apiWebhookBase}/api/webhook/${channel_id}`;
 
     // สร้าง Channel ใหม่
     const newChannel = new LineChannel({
