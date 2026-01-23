@@ -490,11 +490,16 @@ export default function QuickRepliesPanel({
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [reordering, setReordering] = useState<string | null>(null);
   
-  const [form, setForm] = useState({
+  const [form, setForm] = useState<{
+    title: string;
+    shortcut: string;
+    channel_id: string;
+    messages: MessageBox[];
+  }>({
     title: '',
     shortcut: '',
     channel_id: '',
-    messages: [{ type: 'text' as const, content: '', flex_content: null as any, media_url: '' }]
+    messages: [{ type: 'text', content: '', flex_content: null as any, media_url: '' }]
   });
 
   // ==================== Effects ====================

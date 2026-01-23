@@ -257,6 +257,14 @@ export async function POST(request: NextRequest, { params }: RouteParams) {
       }
     }
 
+    // ✅ ตรวจสอบว่า lineUser มีค่าหลังจาก race condition handling
+    if (!lineUser) {
+      console.error('❌ [Bot Log] Failed to get/create LINE user after race condition handling');
+      return NextResponse.json({ 
+        error: 'Failed to get or create LINE user'
+      }, { status: 500 });
+    }
+
     // Find or create conversation
     let conversation = await Conversation.findOne({
       channel_id: channel._id,
